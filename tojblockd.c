@@ -207,7 +207,7 @@ void serve(int sock_fd)
 			info("READ %d bytes starting %ld\n", req.len, req.from);
 			send_reply(sock_fd, req.handle, 0);
 			buf = malloc(req.len);
-			memset(buf, 'A', req.len);
+			udf_fill(buf, req.from, req.len);
 			write_buf(sock_fd, buf, req.len);
 			free(buf);
 			break;
@@ -216,11 +216,11 @@ void serve(int sock_fd)
 			buf = malloc(req.len);
 			read_buf(sock_fd, buf, req.len);
 			free(buf);
-			send_reply(sock_fd, req.handle, 0);
+			send_reply(sock_fd, req.handle, EROFS);
 			break;
 		default:
 			info("COMMAND %d\n", req.type);
-			send_reply(sock_fd, req.handle, 0);
+			send_reply(sock_fd, req.handle, EINVAL);
 			break;
 		}
 	}
