@@ -13,7 +13,16 @@
  * GNU General Public License for more details.
 */
 
-#include <stdint.h>
+/*
+ * Relevant standards:
+ *
+ * Universal Disk Format specification
+ *   version 2.60 at http://www.osta.org/specs/pdf/udf260.pdf
+ * which is a profile of ECMA-167/3
+ *   http://www.ecma-international.org/publications/standards/Ecma-167.htm
+ */
+
+#include "udf.h"
 
 #include <errno.h>
 #include <string.h>
@@ -23,6 +32,8 @@ static uint64_t g_image_size;
 static uint64_t g_free_space;
 
 #define UNUSED(a) ((void)(a));
+
+#define ALIGN(x, sz) (((x) + (sz) - 1) & ~((typeof(x))(sz) - 1))
 
 /* TODO: indexed data structure for extents */
 
@@ -44,6 +55,12 @@ int zero_fill(void *buf, int64_t from, int32_t len, void *config)
 	UNUSED(config);
 
 	memset(buf, 0, len);
+	return 0;
+}
+
+int buffer_fill(void *buf, int64_t from, int32_t len, void *config)
+{
+	memcpy(buf, config + from, len);
 	return 0;
 }
 
@@ -69,6 +86,39 @@ static struct udf_extent *find_extent(uint64_t start)
 	return 0;
 }
 
+static void create_volume_recognition_area(void)
+{
+	/*
+	 * The volume recognition area starts 32k into the volume
+	 * (the first 32k are reserved for the operating system)
+	 * and consists of a series of volume structure descriptors.
+	 * Volume structure descriptors always start on a sector boundary.
+	 */
+	int vsd = ALIGN(32 * 1024, SECTOR_SIZE);
+	int vsd_size = ALIGN(2048, SECTOR_SIZE);
+
+	/*
+	 * According to UDF/2.60 2.1.7, there should be a single NSR
+	 * descriptor in the Extended Area and nothing else.
+	 * The Extended Area is marked by the BEA and TEA descriptors.
+	 * (A Boot Descriptor is also allowed, but is not needed here.)
+	 */
+
+	set_extent(vsd, 7, "\0BEA01\1", buffer_fill); /* ECMA-167 2/9.2 */
+	vsd += vsd_size;
+
+	/*
+	 * NSR03 indicates the use of ECMA-167/3 (the 1997 version).
+	 * NSR02 would indicate the use of ECMA-167/2 (the 1994 version).
+	 */
+	set_extent(vsd, 7, "\0NSR03\1", buffer_fill); /* ECMA-167 3/9.1 */
+	vsd += vsd_size;
+
+	set_extent(vsd, 7, "\0TEA01\1", buffer_fill); /* ECMA-167 2/9.3 */
+
+	/* The sector after the last vsd is reserved and should be zeroed */
+}
+
 void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
 {
 	g_top_dir = target_dir;
@@ -76,6 +126,8 @@ void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
 	g_free_space = free_space;
 
 	set_extent(0, image_size, 0, zero_fill);
+
+	create_volume_recognition_area();
 }
 
 int udf_fill(void *buf, uint64_t from, uint32_t len)

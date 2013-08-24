@@ -246,7 +246,7 @@ int main(int argc, char **argv)
 	struct statvfs target_st;
 	uint64_t image_size = 0;
 	uint64_t free_space = 0;
-	int block_size = 4096;
+	int block_size = SECTOR_SIZE;
 	int dev_fd = -1;
 	int sv[2];
 
