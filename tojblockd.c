@@ -19,10 +19,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <endian.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <unistd.h>
+
 
 #include <sys/mount.h>  /* BLKROSET */
 #include <sys/socket.h>
@@ -145,9 +147,83 @@ void use_socket(int dev_fd, int sock_fd)
 			strerror(errno));
 }
 
+void read_buf(int sock_fd, void *buf, size_t size)
+{
+	size_t total = 0;
+	ssize_t nread;
+
+	do {
+		nread = read(sock_fd, buf + total, size - total);
+		if (nread < 0 && errno == EINTR)
+			continue;
+		if (nread < 0)
+			fatal("read error: %s\n", strerror(errno));
+		total += nread;
+	} while (size > total);
+}
+
+void write_buf(int sock_fd, void *buf, size_t size)
+{
+	size_t total = 0;
+	ssize_t nsent;
+
+	do {
+		nsent = write(sock_fd, buf + total, size - total);
+		if (nsent < 0 && errno == EINTR)
+			continue;
+		if (nsent < 0)
+			fatal("reply error: %s\n", strerror(errno));
+		total += nsent;
+	} while (size > total);
+}
+
+void send_reply(int sock_fd, const char *handle, int error)
+{
+	struct nbd_reply reply;
+
+	reply.magic = htobe32(NBD_REPLY_MAGIC);
+	reply.error = htobe32(error);
+	memcpy(reply.handle, handle, sizeof(reply.handle));
+	write_buf(sock_fd, &reply, sizeof(reply));
+}
+
 void serve(int sock_fd)
 {
-	sleep(60); /* STUB */
+	struct nbd_request req;
+	char *buf;
+
+	for (;;) {
+		read_buf(sock_fd, &req, sizeof(req));
+		req.magic = be32toh(req.magic);
+		req.type = be32toh(req.type);
+		req.from = be64toh(req.from);
+		req.len = be32toh(req.len);
+
+		if (req.magic != NBD_REQUEST_MAGIC)
+			fatal("bad request magic: 0x%lx\n", req.magic);
+
+		switch (req.type) {
+		case NBD_CMD_READ:
+			info("READ %d bytes starting %ld\n", req.len, req.from);
+			send_reply(sock_fd, req.handle, 0);
+			buf = malloc(req.len);
+			memset(buf, 'A', req.len);
+			write_buf(sock_fd, buf, req.len);
+			free(buf);
+			break;
+		case NBD_CMD_WRITE:
+			info("WRITE %d bytes starting %ld\n", req.len, req.from);
+			buf = malloc(req.len);
+			read_buf(sock_fd, buf, req.len);
+			free(buf);
+			send_reply(sock_fd, req.handle, 0);
+			break;
+		default:
+			info("COMMAND %d\n", req.type);
+			send_reply(sock_fd, req.handle, 0);
+			break;
+		}
+	}
 }
 
 void parse_opts(int argc, char **argv)
@@ -226,4 +302,5 @@ int main(int argc, char **argv)
 			fatal("%s processing failed: %s",
 				opt_device, strerror(errno));
 	}
+	return 0;
 }
