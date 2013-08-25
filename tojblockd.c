@@ -191,6 +191,7 @@ void serve(int sock_fd)
 {
 	struct nbd_request req;
 	char *buf;
+	int err;
 
 	for (;;) {
 		read_buf(sock_fd, &req, sizeof(req));
@@ -204,15 +205,15 @@ void serve(int sock_fd)
 
 		switch (req.type) {
 		case NBD_CMD_READ:
-			info("READ %d bytes starting %ld\n", req.len, req.from);
-			send_reply(sock_fd, req.handle, 0);
+			info("READ %d bytes starting 0x%lx\n", req.len, req.from);
 			buf = malloc(req.len);
-			udf_fill(buf, req.from, req.len);
+			err = udf_fill(buf, req.from, req.len);
+			send_reply(sock_fd, req.handle, err);
 			write_buf(sock_fd, buf, req.len);
 			free(buf);
 			break;
 		case NBD_CMD_WRITE:
-			info("WRITE %d bytes starting %ld\n", req.len, req.from);
+			info("WRITE %d bytes starting 0x%lx\n", req.len, req.from);
 			buf = malloc(req.len);
 			read_buf(sock_fd, buf, req.len);
 			free(buf);
