@@ -24,69 +24,147 @@
 
 #include "udf.h"
 
+#include <stdlib.h>
+
 #include <errno.h>
 #include <string.h>
+
+#define __unused __attribute__((unused))
+#include <bsd/sys/tree.h>
 
 static const char *g_top_dir;
 static uint64_t g_image_size;
 static uint64_t g_free_space;
 
-#define UNUSED(a) ((void)(a));
-
 #define ALIGN(x, sz) (((x) + (sz) - 1) & ~((typeof(x))(sz) - 1))
 
-/* TODO: indexed data structure for extents */
-
-typedef int (* extent_fill_t)(void *buf, int64_t from, int32_t len, void *config);;
-
-struct udf_extent {
-	struct udf_extent *next;
-	uint64_t start;
-	uint64_t len;
-	void *config;
-	extent_fill_t extent_fill;
+struct sector_info {
+	RB_ENTRY(sector_info) rb;
+	uint32_t sector_nr;
+	void *data;
 };
 
-static struct udf_extent *extents;
+static RB_HEAD(sector_tree, sector_info) sector_data;
 
-int zero_fill(void *buf, int64_t from, int32_t len, void *config)
+static inline int sector_cmp(struct sector_info *a, struct sector_info *b)
 {
-	UNUSED(from);
-	UNUSED(config);
+	/* can't just subtract because the result might not fit in an int */
+	return a->sector_nr > b->sector_nr ? 1
+		: a->sector_nr < b->sector_nr ? -1
+		: 0;
+}
 
-	memset(buf, 0, len);
+RB_PROTOTYPE_STATIC(sector_tree, sector_info, rb, sector_cmp);
+RB_GENERATE_STATIC(sector_tree, sector_info, rb, sector_cmp);
+
+static void *get_sector(uint32_t sector_nr)
+{
+	struct sector_info dummy;
+	dummy.sector_nr = sector_nr;
+	struct sector_info *p = RB_FIND(sector_tree, &sector_data, &dummy);
+	if (p)
+		return p->data;
 	return 0;
 }
 
-int buffer_fill(void *buf, int64_t from, int32_t len, void *config)
+static void *alloc_sector(uint32_t sector_nr)
 {
-	memcpy(buf, config + from, len);
-	return 0;
+	struct sector_info *p = malloc(sizeof(*p));
+	p->data = malloc(SECTOR_SIZE);
+	memset(p->data, 0, SECTOR_SIZE);
+	p->sector_nr = sector_nr;
+	RB_INSERT(sector_tree, &sector_data, p);
+	return p->data;
 }
 
-static void set_extent(uint64_t start, uint64_t len, void *config, extent_fill_t extent_fill)
+static void record_data(uint64_t start, void *data, uint32_t len)
 {
-	struct udf_extent *new_extent = malloc(sizeof(*new_extent));
-	new_extent->start = start;
-	new_extent->len = len;
-	new_extent->config = config;
-	new_extent->extent_fill = extent_fill;
-	new_extent->next = extents;
-	extents = new_extent;
+	while (len > 0) {
+		uint32_t sector_nr = start / SECTOR_SIZE;
+		void *sector = get_sector(sector_nr);
+		if (!sector)
+			sector = alloc_sector(sector_nr);
+		uint32_t offset = start % SECTOR_SIZE;
+		uint32_t max_len = SECTOR_SIZE - offset;
+		if (max_len > len)
+			max_len = len;
+		memcpy(sector + offset, data, max_len);
+		start += max_len;
+		data += max_len;
+		len -= max_len;
+	}
 }
 
-static struct udf_extent *find_extent(uint64_t start)
+int udf_fill(void *buf, uint64_t from, uint32_t len)
 {
-	struct udf_extent *p;
+	int ret = -EINVAL;
+	while (len > 0) {
+		uint32_t sector_nr = from / SECTOR_SIZE;
+		uint32_t offset = from % SECTOR_SIZE;
+		uint32_t max_len;
+		void *sector;
 
-	for (p = extents; p; p = p->next) {
-		if (start >= p->start && start < p->start + p->len)
-			return p;
+		if (from >= g_image_size)
+			goto err;
+
+		max_len = SECTOR_SIZE - offset;
+		if (max_len > len)
+			max_len = len;
+
+		sector = get_sector(sector_nr);
+		if (sector)
+			memcpy(buf, sector + offset, max_len);
+		else
+			memset(buf, 0, max_len);
+		len -= max_len;
+		buf += max_len;
+		from += max_len;
 	}
 	return 0;
+
+err:
+	memset(buf, 0, len);
+	return ret;
 }
 
-static void create_volume_recognition_area(void)
+/* Erase sectors containing this range. Warning, it wipes whole sectors! */
+static void erase_data(uint64_t start, uint32_t len)
+{
+	struct sector_info dummy;
+	dummy.sector_nr = start / SECTOR_SIZE;
+
+	while (len > 0) {
+		struct sector_info *p = RB_FIND(sector_tree, &sector_data, &dummy);
+		if (p) {
+			p = RB_REMOVE(sector_tree, &sector_data, p);
+			free(p->data);
+			free(p);
+		}
+		if (len >= SECTOR_SIZE)
+			len -= SECTOR_SIZE;
+		else
+			len = 0;
+		dummy.sector_nr++;
+	}
+}
+
+/* Create a volume structure descriptor according to ECMA-167 3/9.1 */
+/* The id parameter must be 5 chars long */
+static void record_volume_structure_descriptor(uint64_t start, const char *id)
+{
+	unsigned char vsd_header[7];
+	/* The total vsd is 2048 bytes long but aside from the header
+	 * it's going to be all zeroes. */
+	erase_data(start, 2048);
+
+	vsd_header[0] = 0; /* structure type; it's 0 for all known VSDs */
+	memcpy(&vsd_header[1], id, 5);
+	vsd_header[6] = 1; /* structure version; it's 1 for all known VSDs */
+
+	record_data(start, vsd_header, 7);
+}
+
+static void record_volume_recognition_area(void)
 {
 	/*
 	 * The volume recognition area starts 32k into the volume
@@ -95,28 +173,27 @@ static void create_volume_recognition_area(void)
 	 * Volume structure descriptors always start on a sector boundary.
 	 */
 	int vsd = ALIGN(32 * 1024, SECTOR_SIZE);
-	int vsd_size = ALIGN(2048, SECTOR_SIZE);
+	int vsd_stride = ALIGN(2048, SECTOR_SIZE);
 
 	/*
 	 * According to UDF/2.60 2.1.7, there should be a single NSR
 	 * descriptor in the Extended Area and nothing else.
 	 * The Extended Area is marked by the BEA and TEA descriptors.
 	 * (A Boot Descriptor is also allowed, but is not needed here.)
-	 */
-
-	set_extent(vsd, 7, "\0BEA01\1", buffer_fill); /* ECMA-167 2/9.2 */
-	vsd += vsd_size;
-
-	/*
+	 * 
 	 * NSR03 indicates the use of ECMA-167/3 (the 1997 version).
 	 * NSR02 would indicate the use of ECMA-167/2 (the 1994 version).
 	 */
-	set_extent(vsd, 7, "\0NSR03\1", buffer_fill); /* ECMA-167 3/9.1 */
-	vsd += vsd_size;
 
-	set_extent(vsd, 7, "\0TEA01\1", buffer_fill); /* ECMA-167 2/9.3 */
+	record_volume_structure_descriptor(vsd, "BEA01"); /* ECMA-167 2/9.2 */
+	vsd += vsd_stride;
+	record_volume_structure_descriptor(vsd, "NSR03"); /* ECMA-167 3/9.1 */
+	vsd += vsd_stride;
+	record_volume_structure_descriptor(vsd, "TEA01"); /* ECMA-167 2/9.3 */
+	vsd += vsd_stride;
 
-	/* The sector after the last vsd is reserved and should be zeroed */
+	/* The sector after the last vsd is reserved and should remain zeroed */
+	erase_data(vsd, SECTOR_SIZE);
 }
 
 void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
@@ -125,30 +202,6 @@ void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
 	g_image_size = image_size;
 	g_free_space = free_space;
 
-	set_extent(0, image_size, 0, zero_fill);
-
-	create_volume_recognition_area();
+	record_volume_recognition_area();
 }
 
-int udf_fill(void *buf, uint64_t from, uint32_t len)
-{
-	while (len > 0) {
-		int ret;
-		struct udf_extent *p = find_extent(from);
-
-		if (!p)
-			return EINVAL;
-		uint32_t max_len = p->start + p->len - from;
-		if (max_len > len)
-			max_len = len;
-		ret = p->extent_fill(buf, from - p->start, max_len, p->config);
-		if (ret) {
-			memset(buf, 0, len);
-			return ret;
-		}
-		len -= max_len;
-		buf += max_len;
-		from += max_len;
-	}
-	return 0;
-}
