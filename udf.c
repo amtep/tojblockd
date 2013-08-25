@@ -34,6 +34,22 @@
 #define __unused __attribute__((unused))
 #include <bsd/sys/tree.h>
 
+struct udf_extent_ad { /* ECMA-167 3/7.1 */
+	uint32_t length;
+	uint32_t location;
+};
+
+struct udf_descriptor_tag { /* ECMA-167 3/7.2 */
+	uint16_t identifier;
+	uint16_t version;
+	uint8_t checksum;
+	uint8_t reserved;
+	uint16_t serial;
+	uint16_t crc;
+	uint16_t crc_length;
+	uint32_t location;
+};
+
 static const char *g_top_dir;
 static uint64_t g_image_size;
 static uint64_t g_free_space;
@@ -203,6 +219,113 @@ static void record_volume_recognition_area(void)
 	sectorspace_mark(space_used, 0, vsd);
 }
 
+enum descriptor_tag_type {
+	/* Listed in ECMA-167 3/7.2.1 */
+	PRIMARY_VD_TAG = 1,
+	ANCHOR_VD_POINTER_TAG = 2,
+	VD_POINTER_TAG = 3,
+	IMPLEMENTATION_USE_VD_TAG = 4,
+	PARTITION_DESCRIPTOR_TAG = 5,
+	LOGICAL_VD_TAG = 6,
+	UNALLOCATED_SPACE_DESCRIPTOR_TAG = 7,
+	TERMINATING_DESCRIPTOR_TAG = 8,
+	LOGICAL_VOLUME_INTEGRITY_DESCRIPTOR_TAG = 9
+};
+
+/*
+ * Terminology note: the "descriptor" is the whole thing being written,
+ * usually 512 bytes or more. The "descriptor tag" is a 16-byte header at
+ * the start of it. The tag contains some checksums which is why it's
+ * only filled in here, just before recording.  See ECMA-167 3/7.2
+ *
+ * Not all descriptors follow this format. Only use record_descriptor()
+ * for the ones that start with the standard tag format.
+ */
+static void record_descriptor(uint64_t pos, void *buf, uint16_t id, uint32_t len)
+{
+	struct udf_descriptor_tag *tag = buf;
+	uint8_t *p = buf;
+	int i;
+
+	tag->identifier = htole16(id);
+	tag->version = 3; /* version of ECMA-167 in use */
+	tag->checksum = 0;
+	tag->reserved = 0;
+	tag->serial = 0; /* incremented when reusing old media; N/A here */
+	tag->crc_length = len - sizeof(*tag);
+	tag->location = htole32(pos / SECTOR_SIZE);
+
+	tag->crc = htole16(udf_crc(buf + sizeof(*tag), tag->crc_length));
+
+	/* checksum is a simple modulo-256 sum of the tag bytes */
+	for (i = 0; i < 16; i++)
+		tag->checksum += *p++;
+
+	record_data(pos, buf, len);
+}
+
+static void fill_extent_ad(struct udf_extent_ad *st,
+	uint32_t length, uint32_t loc)
+{
+	/* See ECMA-167 3/7.1 */
+	st->length = htole32(length);
+	st->location = htole32(loc);
+}
+
+/* The caller must have reserved and zeroed the sector for this already */
+static void record_anchor_vd_pointer(uint64_t pos,
+	uint64_t vds_start, uint32_t vds_len)
+{
+	/*
+	 * This structure gives the location of the volume descriptor
+	 * sequence (VDS). See ECMA-167 3/10.2
+	 */
+
+	struct anchor_vd_pointer {
+		struct udf_descriptor_tag tag;
+		struct udf_extent_ad main_vds_extent;
+		struct udf_extent_ad reserve_vds_extent;
+		char padding[480];
+	} st;
+
+	memset(&st, 0, sizeof(st));
+	fill_extent_ad(&st.main_vds_extent, vds_len, vds_start / SECTOR_SIZE);
+	fill_extent_ad(&st.reserve_vds_extent, 0, 0); /* no reserve copy */
+	record_descriptor(pos, &st, ANCHOR_VD_POINTER_TAG, sizeof(st));
+}
+
+static void record_volume_data_structures(void)
+{
+	/*
+	 * The volume descriptors are 1 sector each and we need space
+	 * for the Primary Volume Descriptor, the Unallocated Space Descriptor,
+	 * and the Terminating Descriptor.
+	 */
+	const int vds_sectors = 3;
+	uint32_t last_sector = sectorspace_endsector(space_used);
+	uint64_t start;
+
+	/*
+	 * The volume descriptors are pointed at by two Anchor Volume
+	 * Descriptor Pointer sectors at fixed locations.
+	 * Reserve those locations now.
+	 */
+	sectorspace_mark(space_used, 256 * SECTOR_SIZE, SECTOR_SIZE);
+	sectorspace_mark(space_used, (last_sector - 256) * SECTOR_SIZE,
+		SECTOR_SIZE);
+
+	/* Pick a handy location for the volume descriptor sequence */
+	start = sectorspace_find(space_used, vds_sectors * SECTOR_SIZE);
+
+	//record_primary_volume_descriptor(start);
+	//record_unallocated_space_descriptor(start + SECTOR_SIZE);
+	//record_terminating_descriptor(start + 2 * SECTOR_SIZE);
+	record_anchor_vd_pointer(256 * SECTOR_SIZE,
+		start, vds_sectors * SECTOR_SIZE);
+	record_anchor_vd_pointer((last_sector - 256) * SECTOR_SIZE,
+		start, vds_sectors * SECTOR_SIZE);
+}
+
 void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
 {
 	g_top_dir = target_dir;
@@ -212,5 +335,6 @@ void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
 	space_used = init_sectorspace(0, image_size);
 
 	record_volume_recognition_area();
+	record_volume_data_structures();
 }
 

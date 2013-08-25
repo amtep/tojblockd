@@ -161,3 +161,13 @@ uint64_t sectorspace_find(struct sectorspace *space, uint64_t len)
 
 	return 0; /* no space */
 }
+
+uint32_t sectorspace_startsector(struct sectorspace *space)
+{
+	return space->starts;
+}
+
+uint32_t sectorspace_endsector(struct sectorspace *space)
+{
+	return space->ends;
+}
