@@ -29,14 +29,14 @@
 #include <errno.h>
 #include <string.h>
 
+#include "sectorspace.h"
+
 #define __unused __attribute__((unused))
 #include <bsd/sys/tree.h>
 
 static const char *g_top_dir;
 static uint64_t g_image_size;
 static uint64_t g_free_space;
-
-#define ALIGN(x, sz) (((x) + (sz) - 1) & ~((typeof(x))(sz) - 1))
 
 struct sector_info {
 	RB_ENTRY(sector_info) rb;
@@ -56,6 +56,9 @@ static inline int sector_cmp(struct sector_info *a, struct sector_info *b)
 
 RB_PROTOTYPE_STATIC(sector_tree, sector_info, rb, sector_cmp);
 RB_GENERATE_STATIC(sector_tree, sector_info, rb, sector_cmp);
+
+/* space_used keeps track of space that has been reserved or filled */
+struct sectorspace *space_used;
 
 static void *get_sector(uint32_t sector_nr)
 {
@@ -194,6 +197,10 @@ static void record_volume_recognition_area(void)
 
 	/* The sector after the last vsd is reserved and should remain zeroed */
 	erase_data(vsd, SECTOR_SIZE);
+	vsd += SECTOR_SIZE;
+
+	/* Reserve the leading 32k and the recognition area */
+	sectorspace_mark(space_used, 0, vsd);
 }
 
 void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
@@ -201,6 +208,8 @@ void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
 	g_top_dir = target_dir;
 	g_image_size = image_size;
 	g_free_space = free_space;
+
+	space_used = init_sectorspace(0, image_size);
 
 	record_volume_recognition_area();
 }
