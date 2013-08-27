@@ -273,8 +273,42 @@ static void fill_extent_ad(struct udf_extent_ad *st,
 }
 
 /* The caller must have reserved and zeroed the sector for this already */
+static void record_primary_volume_descriptor(uint64_t pos)
+{
+	struct primary_vd { /* ECMA-167 3/10.1 */
+		struct udf_descriptor_tag tag;
+		uint32_t vd_sequence_number;
+		uint32_t primary_vd_number;
+		char volume_identifier[32];
+		uint16_t volume_sequence_number;
+		uint16_t max_volume_sequence_number;
+		uint16_t interchange_level;
+		uint16_t maximum_interchange_level;
+		uint32_t charset_list;
+		uint32_t max_charset_list;
+		char volume_set_identifier[128];
+		struct udf_charspec descriptor_cs;
+		struct udf_charspec explanatory_cs;
+		struct extent_ad volume_abstract;
+		struct extent_ad volume_copyright;
+		struct udf_regid application_identifier;
+		struct udf_timestamp recording_datetime;
+		struct udf_regid implementation_identifier;
+		char implementation_use[64];
+		uint32_t prev_vds_location;
+		uint16_t flags;
+		char reserved[22];
+	} st;
+
+	memset(&st, 0, sizeof(st));
+	
+
+	record_descriptor(pos, &st, PRIMARY_VD_TAG, sizeof(st));
+}
+
+/* The caller must have reserved and zeroed the sector for this already */
 static void record_anchor_vd_pointer(uint64_t pos,
-	uint64_t vds_start, uint32_t vds_len)
+	uint64_t main_vds, uint64_t reserve_vds, uint32_t vds_len)
 {
 	/*
 	 * This structure gives the location of the volume descriptor
@@ -289,41 +323,48 @@ static void record_anchor_vd_pointer(uint64_t pos,
 	} st;
 
 	memset(&st, 0, sizeof(st));
-	fill_extent_ad(&st.main_vds_extent, vds_len, vds_start / SECTOR_SIZE);
-	fill_extent_ad(&st.reserve_vds_extent, 0, 0); /* no reserve copy */
+	fill_extent_ad(&st.main_vds_extent, vds_len, main_vds/ SECTOR_SIZE);
+	fill_extent_ad(&st.reserve_vds_extent,
+		vds_len, reserve_vds / SECTOR_SIZE);
 	record_descriptor(pos, &st, ANCHOR_VD_POINTER_TAG, sizeof(st));
 }
 
 static void record_volume_data_structures(void)
 {
-	/*
-	 * The volume descriptors are 1 sector each and we need space
-	 * for the Primary Volume Descriptor, the Unallocated Space Descriptor,
-	 * and the Terminating Descriptor.
-	 */
-	const int vds_sectors = 3;
+	const int vds_sectors = 16; /* minimum according to UDF 2.2.3 */
 	uint32_t last_sector = sectorspace_endsector(space_used);
-	uint64_t start;
+	/* The volume descriptor sequence must be created in two copies */
+	uint64_t main_vds;
+	uint64_t res_vds;
 
 	/*
-	 * The volume descriptors are pointed at by two Anchor Volume
+	 * The volume descriptors are pointed at by three Anchor Volume
 	 * Descriptor Pointer sectors at fixed locations.
 	 * Reserve those locations now.
 	 */
 	sectorspace_mark(space_used, 256 * SECTOR_SIZE, SECTOR_SIZE);
 	sectorspace_mark(space_used, (last_sector - 256) * SECTOR_SIZE,
 		SECTOR_SIZE);
+	sectorspace_mark(space_used, last_sector * SECTOR_SIZE, SECTOR_SIZE);
 
-	/* Pick a handy location for the volume descriptor sequence */
-	start = sectorspace_find(space_used, vds_sectors * SECTOR_SIZE);
+	/* Pick any location for the volume descriptor sequences */
+	main_vds = sectorspace_find(space_used, vds_sectors * SECTOR_SIZE);
+	res_vds = sectorspace_find(space_used, vds_sectors * SECTOR_SIZE);
 
-	//record_primary_volume_descriptor(start);
-	//record_unallocated_space_descriptor(start + SECTOR_SIZE);
-	//record_terminating_descriptor(start + 2 * SECTOR_SIZE);
+	record_primary_volume_descriptor(main_vds);
+	//record_unallocated_space_descriptor(main_vds + SECTOR_SIZE);
+	//record_terminating_descriptor(main_vds + 2 * SECTOR_SIZE);
+
+	record_primary_volume_descriptor(res_vds);
+	//record_unallocated_space_descriptor(res_vds + SECTOR_SIZE);
+	//record_terminating_descriptor(res_vds + 2 * SECTOR_SIZE);
+
 	record_anchor_vd_pointer(256 * SECTOR_SIZE,
-		start, vds_sectors * SECTOR_SIZE);
+		main_vds, res_vds, vds_sectors * SECTOR_SIZE);
 	record_anchor_vd_pointer((last_sector - 256) * SECTOR_SIZE,
-		start, vds_sectors * SECTOR_SIZE);
+		main_vds, res_vds, vds_sectors * SECTOR_SIZE);
+	record_anchor_vd_pointer(last_sector * SECTOR_SIZE,
+		main_vds, res_vds, vds_sectors * SECTOR_SIZE);
 }
 
 void init_udf(const char *target_dir, uint64_t image_size, uint64_t free_space)
