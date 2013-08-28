@@ -23,7 +23,7 @@
 
 #include <stdlib.h>
 
-#include "udf.h"
+#include "vfat.h"
 
 /*
  * struct sectorspace and struct sector_extent happen to have the

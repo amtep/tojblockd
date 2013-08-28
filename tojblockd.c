@@ -33,7 +33,7 @@
 #include <sys/types.h>
 
 #include "nbd.h"
-#include "udf.h"
+#include "vfat.h"
 
 #ifndef PROGRAM_NAME
 #define PROGRAM_NAME "tojblockd"
@@ -135,6 +135,10 @@ uint64_t set_image_size(int dev_fd, uint64_t size, int block_size)
 	if (size & (block_size - 1))
 		blocks++;
 
+	if (!vfat_size_ok(blocks, block_size))
+		fatal("image of %lu sectors of %lu bytes not ok for vfat\n",
+			(unsigned long) blocks, (unsigned long) block_size);
+
 	if (ioctl(dev_fd, NBD_SET_SIZE_BLOCKS, blocks) < 0)
 		fatal("could not set image size\n");
 	return blocks * block_size;
@@ -205,22 +209,22 @@ void serve(int sock_fd)
 
 		switch (req.type) {
 		case NBD_CMD_READ:
-			info("READ %d bytes starting 0x%lx\n", req.len, req.from);
+			info("READ %u bytes starting 0x%lx\n", req.len, req.from);
 			buf = malloc(req.len);
-			err = udf_fill(buf, req.from, req.len);
+			err = vfat_fill(buf, req.from, req.len);
 			send_reply(sock_fd, req.handle, err);
 			write_buf(sock_fd, buf, req.len);
 			free(buf);
 			break;
 		case NBD_CMD_WRITE:
-			info("WRITE %d bytes starting 0x%lx\n", req.len, req.from);
+			info("WRITE %u bytes starting 0x%lx\n", req.len, req.from);
 			buf = malloc(req.len);
 			read_buf(sock_fd, buf, req.len);
 			free(buf);
 			send_reply(sock_fd, req.handle, EROFS);
 			break;
 		default:
-			info("COMMAND %d\n", req.type);
+			info("COMMAND %u\n", req.type);
 			send_reply(sock_fd, req.handle, EINVAL);
 			break;
 		}
@@ -293,7 +297,7 @@ int main(int argc, char **argv)
 		/* child */
 
 		close(sv[0]);
-		init_udf(target_dir, image_size, free_space);
+		vfat_init(target_dir, image_size, free_space);
 		serve(sv[1]);
 	} else {
 		/* parent */
