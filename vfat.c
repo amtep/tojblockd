@@ -28,23 +28,34 @@
 
 /*
  * The layout of a FAT filesystem is very simple.
+ *
  * - First come RESERVED_SECTORS sectors, which include the boot sector
  * and the filesystem information sector.
- * - Then comes a FAT table (usually there are two but only one is
- * needed here because it's not a real on-disk filesystem).
+ *
+ * - Then comes a file allocation table (usually there are two copies
+ * but only one is needed here because it's not a real on-disk filesystem).
+ *
  * - Then come the data clusters, which are CLUSTER_SIZE each.
+ *
  * - Everything is aligned on sector boundaries.
+ *
  * - The FAT uses 4 bytes per data cluster to record allocation.
  * The allocations are singly linked lists, with each entry pointing
  * to the next or being an end marker. The first two entries are dummy
  * and don't refer to data clusters.
+ *
  * - Some of the files recorded in the FAT are directories, which contain
  * lists of filenames, file sizes and their starting cluster numbers.
+ * The boot sector has a pointer to the root directory.
  */
 
 /* This is part of the FAT spec: a fatfs with less than this
  * number of clusters must be FAT12 or FAT16 */
 #define MIN_FAT32_CLUSTERS 65525
+
+/* The traditional definition of min, unsafe against side effects in a or b
+ * but at least not limiting the types of a or b */
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 static const char *g_top_dir;
 static uint64_t g_free_space;
@@ -91,55 +102,90 @@ uint8_t boot_sector[SECTOR_SIZE] = {
 	0x29,  /* indicates next 3 fields are valid */
 #define VOLUME_ID_OFFSET 0x43
 	0, 0, 0, 0,  /* volume serial number, try to be unique */
-	'T', 'O', 'J', 'B', 'L', 'O', 'C', 'K', ' ', 'F', 'S',  /* label */
+	'T', 'O', 'J', 'B', 'L', 'O', 'C', 'K', 'F', 'S', ' ',  /* label */
 	'F', 'A', 'T', '3', '2', ' ', ' ', ' ',  /* filesystem type */
 	0, /* the rest is zero filled */
 };
 	
 uint8_t fsinfo_sector[SECTOR_SIZE];
 
-static void *get_sector(uint32_t sector_nr)
+/*
+ * The FAT sectors are deduced from the stored file and directory info,
+ * and are created on demand in this function.
+ */
+void fat_fill(uint32_t *buf, uint32_t entry_nr, uint32_t entries)
 {
-	if (sector_nr == 0)
-		return &boot_sector;
-	if (sector_nr == 1)
-		return &fsinfo_sector;
-	if (sector_nr < RESERVED_SECTORS)
-		return 0;
+	uint32_t i = 0;
 
-	return 0;
+	/* Note: despite its name, FAT32 entries have only 28 bits.
+	 * The top 4 bits should be cleared when allocating entries. */
+
+	/* entry 0 contains the media descriptor in its low byte,
+	 * should be the same as in the boot sector. */
+	if (entry_nr + i == 0)
+		buf[i++] = htole32(0x0ffffff8);
+
+	/* entry 1 contains the end-of-chain marker */
+	if (entry_nr + i == 1 && i < entries)
+		buf[i++] = htole32(0x0fffffff);
+
+	for (; i < entries; i++) {
+		buf[i] = htole32(0);
+	}
 }
 
 int vfat_fill(void *buf, uint64_t from, uint32_t len)
 {
-	int ret = -EINVAL;
 	while (len > 0) {
+		uint32_t maxcopy = len;
 		uint32_t sector_nr = from / SECTOR_SIZE;
-		uint32_t offset = from % SECTOR_SIZE;
-		uint32_t max_len;
-		void *sector;
-
-		if (sector_nr >= g_total_sectors)
-			goto err;
-
-		max_len = SECTOR_SIZE - offset;
-		if (max_len > len)
-			max_len = len;
-
-		sector = get_sector(sector_nr);
-		if (sector)
-			memcpy(buf, sector + offset, max_len);
-		else
-			memset(buf, 0, max_len);
-		len -= max_len;
-		buf += max_len;
-		from += max_len;
+		if (sector_nr < RESERVED_SECTORS) {
+			uint32_t offset = from % SECTOR_SIZE;
+			if (sector_nr == 0) {
+				maxcopy = min(len, SECTOR_SIZE - from);
+				memcpy(buf, &boot_sector[offset], maxcopy);
+			} else if (sector_nr == 1) {
+				maxcopy = min(len, 2*SECTOR_SIZE - from);
+				memcpy(buf, &fsinfo_sector[offset], maxcopy);
+			} else {
+				maxcopy = min(len,
+					RESERVED_SECTORS * SECTOR_SIZE - from);
+				memset(buf, 0, maxcopy);
+			}
+		} else if (sector_nr < RESERVED_SECTORS + g_fat_sectors) {
+			/* FAT sector */
+			uint32_t entry_nr = (from
+				- RESERVED_SECTORS * SECTOR_SIZE) / 4;
+			maxcopy = min(len, (RESERVED_SECTORS + g_fat_sectors)
+				* SECTOR_SIZE - from);
+			if (from % 4 || maxcopy < 4) {
+				/* deal with unaligned reads */
+				uint32_t fat_entry;
+				fat_fill(&fat_entry, entry_nr, 1);
+				maxcopy = min(maxcopy, 4);
+				memcpy(buf, ((char *)&fat_entry) + from % 4,
+					maxcopy);
+			} else {
+				maxcopy -= maxcopy % 4;
+				fat_fill(buf, entry_nr, maxcopy / 4);
+			}
+		} else if (sector_nr < g_total_sectors) {
+			// uint32_t data_cluster = from / CLUSTER_SIZE;
+			uint32_t offset = from % CLUSTER_SIZE;
+			/* stub: data cluster */
+			maxcopy = min(len, CLUSTER_SIZE - offset);
+			memset(buf, 0, maxcopy);
+		} else {
+			/* past end of image */
+			memset(buf, 0, len);
+			return -EINVAL;
+		}
+		len -= maxcopy;
+		buf += maxcopy;
+		from += maxcopy;
 	}
-	return 0;
 
-err:
-	memset(buf, 0, len);
-	return ret;
+	return 0;
 }
 
 void init_boot_sector(void)
@@ -165,11 +211,12 @@ void init_boot_sector(void)
 void init_fsinfo_sector(void)
 {
 	/* Nothing really useful here, but it's expected to be present */
-	memcpy(&fsinfo_sector[0], "RRaA", 4);
-	memcpy(&fsinfo_sector[0x1e4], "rrAa", 4);
+	memcpy(&fsinfo_sector[0], "RRaA", 4);  /* magic */
+	memcpy(&fsinfo_sector[0x1e4], "rrAa", 4);  /* more magic */
+	/* unset values for first free cluster and last allocated cluster */
 	memcpy(&fsinfo_sector[0x1e8], "\xff\xff\xff\xff", 4);
 	memcpy(&fsinfo_sector[0x1ec], "\xff\xff\xff\xff", 4);
-	memcpy(&fsinfo_sector[0x1fc], "\0\0\x55\xaa", 4);
+	memcpy(&fsinfo_sector[0x1fc], "\0\0\x55\xaa", 4);  /* magic here too */
 }
 
 void vfat_init(const char *target_dir, uint64_t free_space)
@@ -185,7 +232,7 @@ void vfat_init(const char *target_dir, uint64_t free_space)
 	init_fsinfo_sector();
 }
 
-/* TODO: do something about the hidden coupling between this functions
+/* TODO: do something about the hidden coupling between this function
  * and vfat_init above. */
 uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 {
