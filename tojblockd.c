@@ -135,9 +135,10 @@ uint64_t set_image_size(int dev_fd, uint64_t size, int block_size)
 	if (size & (block_size - 1))
 		blocks++;
 
-	if (!vfat_size_ok(blocks, block_size))
-		fatal("image of %lu sectors of %lu bytes not ok for vfat\n",
-			(unsigned long) blocks, (unsigned long) block_size);
+	blocks = vfat_adjust_size(blocks, block_size);
+	if (!blocks)
+		fatal("image size %llu with sector size %lu not ok for vfat\n",
+			size, (unsigned long) block_size);
 
 	if (ioctl(dev_fd, NBD_SET_SIZE_BLOCKS, blocks) < 0)
 		fatal("could not set image size\n");
@@ -297,7 +298,7 @@ int main(int argc, char **argv)
 		/* child */
 
 		close(sv[0]);
-		vfat_init(target_dir, image_size, free_space);
+		vfat_init(target_dir, free_space);
 		serve(sv[1]);
 	} else {
 		/* parent */
