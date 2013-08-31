@@ -109,6 +109,21 @@ uint8_t boot_sector[SECTOR_SIZE] = {
 	
 uint8_t fsinfo_sector[SECTOR_SIZE];
 
+struct dir_cluster {
+	uint32_t starting_cluster;
+	uint32_t next_cluster;  /* 0 if this is the last for this dir */
+	uint32_t cluster_offset;  /* number of preceding clusters */
+	/* the following are only valid if cluster_offset == 0 */
+	uint32_t data_len;
+	void *data;
+	const char *path;  /* down from g_target_dir */
+};
+
+/* dir_clusters is indexed by cluster_nr - 2 */
+static struct dir_cluster *dir_clusters;
+static unsigned int dir_clusters_allocated;
+static unsigned int dir_clusters_used;
+
 /*
  * The FAT sectors are deduced from the stored file and directory info,
  * and are created on demand in this function.
@@ -128,6 +143,14 @@ void fat_fill(uint32_t *buf, uint32_t entry_nr, uint32_t entries)
 	/* entry 1 contains the end-of-chain marker */
 	if (entry_nr + i == 1 && i < entries)
 		buf[i++] = htole32(0x0fffffff);
+
+	while (entry_nr + i < dir_clusters_used + 2 && i < entries) {
+		uint32_t next = dir_clusters[entry_nr + i - 2].next_cluster;
+		if (next == 0)
+			buf[i] = htole32(0x0fffffff);  /* end of chain marker */
+		else
+			buf[i] = htole32(next);
+	}
 
 	for (; i < entries; i++) {
 		buf[i] = htole32(0);
