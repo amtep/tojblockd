@@ -22,6 +22,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <vector>
+
 #define CLUSTER_SIZE 4096  /* must be a power of two */
 #define SECTORS_PER_CLUSTER (CLUSTER_SIZE / SECTOR_SIZE)
 #define RESERVED_SECTORS 32  /* before first FAT */
@@ -114,20 +116,26 @@ uint8_t boot_sector[SECTOR_SIZE] = {
 	
 uint8_t fsinfo_sector[SECTOR_SIZE];
 
+/* This holds the early part of the FAT: the initial 2 entries and the
+ * allocated directory clusters. What follows is the free space and
+ * the mapped files. Those are synthesized when queried, because they're
+ * too repetitive to be worth storing directly. */
+std::vector<uint32_t> fat_beginning;
+
+/* Information about the data clusters allocated to directories.
+ * Directories are allocated from the start of the FAT, but to make
+ * the scanning code simpler they don't have to be allocated continuously
+ * the way mapped files are. */
 struct dir_cluster {
-	uint32_t starting_cluster;
-	uint32_t next_cluster;  /* 0 if this is the last for this dir */
+	uint32_t starting_cluster; /* number of first cluster in this dir */
 	uint32_t cluster_offset;  /* number of preceding clusters */
 	/* the following are only valid if cluster_offset == 0 */
-	uint32_t data_len;
-	void *data;
-	const char *path;  /* down from g_target_dir */
+	std::vector<char> data;
+	const char *path;  /* path down from g_target_dir */
 };
 
 /* dir_clusters is indexed by cluster_nr - 2 */
-static struct dir_cluster *dir_clusters;
-static unsigned int dir_clusters_allocated;
-static unsigned int dir_clusters_used;
+std::vector<struct dir_cluster> dir_clusters;
 
 /*
  * The FAT sectors are deduced from the stored file and directory info,
@@ -138,24 +146,10 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 	uint32_t *buf = (uint32_t *)vbuf;
 	uint32_t i = 0;
 
-	/* Note: despite its name, FAT32 entries have only 28 bits.
-	 * The top 4 bits should be cleared when allocating entries. */
-
-	/* entry 0 contains the media descriptor in its low byte,
-	 * should be the same as in the boot sector. */
-	if (entry_nr + i == 0)
-		buf[i++] = htole32(0x0ffffff8);
-
-	/* entry 1 contains the end-of-chain marker */
-	if (entry_nr + i == 1 && i < entries)
-		buf[i++] = htole32(0x0fffffff);
-
-	while (entry_nr + i < dir_clusters_used + 2 && i < entries) {
-		uint32_t next = dir_clusters[entry_nr + i - 2].next_cluster;
-		if (next == 0)
-			buf[i] = htole32(0x0fffffff);  /* end of chain marker */
-		else
-			buf[i] = htole32(next);
+	if (entry_nr < fat_beginning.size()) {
+		uint32_t count = min(entries, fat_beginning.size() - entry_nr);
+		memcpy(vbuf, (void *) &fat_beginning[0], count * 4);
+		i = count;
 	}
 
 	for (; i < entries; i++) {
@@ -259,6 +253,12 @@ void vfat_init(const char *target_dir, uint64_t free_space)
 
 	init_boot_sector();
 	init_fsinfo_sector();
+
+	/* entry 0 contains the media descriptor in its low byte,
+	 * should be the same as in the boot sector. */
+	fat_beginning.push_back(htole32(0x0ffffff8));
+	/* entry 1 contains the end-of-chain marker */
+	fat_beginning.push_back(htole32(0x0fffffff));
 }
 
 /* TODO: do something about the hidden coupling between this function
