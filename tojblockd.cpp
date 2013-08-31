@@ -158,7 +158,7 @@ void read_buf(int sock_fd, void *buf, size_t size)
 	ssize_t nread;
 
 	do {
-		nread = read(sock_fd, buf + total, size - total);
+		nread = read(sock_fd, (char *) buf + total, size - total);
 		if (nread < 0 && errno == EINTR)
 			continue;
 		if (nread < 0)
@@ -173,7 +173,7 @@ void write_buf(int sock_fd, void *buf, size_t size)
 	ssize_t nsent;
 
 	do {
-		nsent = write(sock_fd, buf + total, size - total);
+		nsent = write(sock_fd, (char *) buf + total, size - total);
 		if (nsent < 0 && errno == EINTR)
 			continue;
 		if (nsent < 0)
@@ -195,7 +195,7 @@ void send_reply(int sock_fd, const char *handle, int error)
 void serve(int sock_fd)
 {
 	struct nbd_request req;
-	char *buf;
+	void *buf;
 	int err;
 
 	for (;;) {

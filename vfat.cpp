@@ -128,8 +128,9 @@ static unsigned int dir_clusters_used;
  * The FAT sectors are deduced from the stored file and directory info,
  * and are created on demand in this function.
  */
-void fat_fill(uint32_t *buf, uint32_t entry_nr, uint32_t entries)
+void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 {
+	uint32_t *buf = (uint32_t *)vbuf;
 	uint32_t i = 0;
 
 	/* Note: despite its name, FAT32 entries have only 28 bits.
@@ -204,7 +205,7 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 			return -EINVAL;
 		}
 		len -= maxcopy;
-		buf += maxcopy;
+		buf = (char *) buf + maxcopy;
 		from += maxcopy;
 	}
 
