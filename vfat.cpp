@@ -52,6 +52,11 @@
 /* This is part of the FAT spec: a fatfs with less than this
  * number of clusters must be FAT12 or FAT16 */
 #define MIN_FAT32_CLUSTERS 65525
+/* Despite its name, FAT32 only uses 28 bits in its entries.
+ * The top 4 bits should be cleared when allocating.
+ * Entries 0x0ffffff0 and higher are reserved, as are 0 and 1. */
+#define MAX_FAT32_CLUSTERS (0x0ffffff0 - 2)
+
 
 /* The traditional definition of min, unsafe against side effects in a or b
  * but at least not limiting the types of a or b */
@@ -274,6 +279,8 @@ uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 		/ SECTORS_PER_CLUSTER;
 	if (data_clusters < MIN_FAT32_CLUSTERS)  /* imposed by spec */
 		data_clusters = MIN_FAT32_CLUSTERS;
+	if (data_clusters > MAX_FAT32_CLUSTERS)
+		data_clusters = MAX_FAT32_CLUSTERS;
 	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE);
 
 	g_fat_sectors = fat_sectors;
