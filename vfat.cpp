@@ -59,6 +59,8 @@
  * Entries 0x0ffffff0 and higher are reserved, as are 0 and 1. */
 #define MAX_FAT32_CLUSTERS (0x0ffffff0 - 2)
 
+#define FAT_END_OF_CHAIN 0x0fffffff
+
 
 /* The traditional definition of min, unsafe against side effects in a or b
  * but at least not limiting the types of a or b */
@@ -136,6 +138,20 @@ struct dir_cluster {
 
 /* dir_clusters is indexed by cluster_nr - 2 */
 std::vector<struct dir_cluster> dir_clusters;
+
+uint32_t alloc_new_dir(const char *path)
+{
+	struct dir_cluster new_cluster;
+
+	new_cluster.starting_cluster = fat_beginning.size();
+	new_cluster.cluster_offset = 0;
+	new_cluster.path = strdup(path);
+
+	fat_beginning.push_back(htole32(FAT_END_OF_CHAIN));
+	dir_clusters.push_back(new_cluster);
+	g_first_free_cluster++;  // TODO: what if there's no more space?
+	return new_cluster.starting_cluster;
+}
 
 /*
  * The FAT sectors are deduced from the stored file and directory info,
@@ -258,7 +274,9 @@ void vfat_init(const char *target_dir, uint64_t free_space)
 	 * should be the same as in the boot sector. */
 	fat_beginning.push_back(htole32(0x0ffffff8));
 	/* entry 1 contains the end-of-chain marker */
-	fat_beginning.push_back(htole32(0x0fffffff));
+	fat_beginning.push_back(htole32(FAT_END_OF_CHAIN));
+
+	alloc_new_dir("."); /* create empty root directory */
 }
 
 /* TODO: do something about the hidden coupling between this function
