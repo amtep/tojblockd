@@ -83,7 +83,7 @@ static uint32_t g_last_free_cluster;
 
 /* All multibyte values in here are stored in little-endian format */
 uint8_t boot_sector[SECTOR_SIZE] = {
-	0xeb, 0x58, 0x90,  /* x86 asm, jump to offset 0x5a */
+	0xeb, 0xfe, 0x90,  /* x86 asm, infinite loop */
 	'T', 'O', 'J', 'B', 'L', 'O', 'C', 'K', /* system id */
 	/* 0x00B, start of bios parameter block */
 	SECTOR_SIZE & 0xff, (SECTOR_SIZE >> 8) & 0xff,
