@@ -290,7 +290,7 @@ uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 
 	/* first calculation is far too optimistic because we need fat space */
 	data_clusters = (sectors - RESERVED_SECTORS) / SECTORS_PER_CLUSTER;
-	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE);
+	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE) / SECTOR_SIZE;
 
 	/* second calculation corrects for that */
 	data_clusters = (sectors - fat_sectors - RESERVED_SECTORS)
@@ -299,7 +299,7 @@ uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 		data_clusters = MIN_FAT32_CLUSTERS;
 	if (data_clusters > MAX_FAT32_CLUSTERS)
 		data_clusters = MAX_FAT32_CLUSTERS;
-	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE);
+	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE) / SECTOR_SIZE;
 
 	g_fat_sectors = fat_sectors;
 	g_data_clusters = data_clusters;
