@@ -181,6 +181,10 @@ static uint32_t last_free_cluster(void)
 	return filemaps.back().starting_cluster - 1;
 }
 
+/*
+ * Allocate more clusters for the directory starting at clust_nr,
+ * if needed.
+ */
 int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 {
 	uint32_t clusters_needed;
@@ -202,6 +206,8 @@ int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 		new_cluster.cluster_offset = chunk->cluster_offset + 1;
 		new_cluster.path = 0;
 		dir_clusters.push_back(new_cluster);
+		// dir might have been invalidated by that push
+		dir = &dir_clusters[clust_nr - 2];
 		fat_beginning.push_back(htole32(FAT_END_OF_CHAIN));
 		fat_beginning[dir->last_cluster] = htole32(new_cluster_nr);
 		dir->last_cluster = new_cluster_nr;
@@ -321,7 +327,6 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 	 * have to. */
 	if (parent_clust == 0)
 		parent_clust = 2;
-	parent = &dir_clusters[parent_clust - 2];
 
 	/* Check if the result will fit in the allocated space */
 	/* add one entry for the shortname */
@@ -360,6 +365,7 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 	short_entry[30] = (file_size >> 16) & 0xff;
 	short_entry[31] = (file_size >> 24) & 0xff;
 
+	parent = &dir_clusters[parent_clust - 2];
 	data_offset = parent->data.size();
 	parent->data.resize(parent->data.size() + num_entries * DIR_ENTRY_SIZE);
 
