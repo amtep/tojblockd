@@ -18,11 +18,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <endian.h>
 #include <errno.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fts.h>
+
 #include <vector>
+#include "ConvertUTF.h"
 
 #define CLUSTER_SIZE 4096  /* must be a power of two */
 #define SECTORS_PER_CLUSTER (CLUSTER_SIZE / SECTOR_SIZE)
@@ -130,6 +136,10 @@ typedef std::vector<uint16_t> filename_t;
 #define DIR_ENTRY_SIZE 32
 #define CHARS_PER_DIR_ENTRY 13
 
+// These are initialized by vfat_init
+static filename_t dot_name;  // contains "."
+static filename_t dot_dot_name;  // contains ".."
+
 /* Information about the data clusters allocated to directories.
  * Directories are allocated from the start of the FAT, but to make
  * the scanning code simpler they don't have to be allocated continuously
@@ -139,7 +149,7 @@ struct dir_cluster {
 	uint32_t cluster_offset;  /* number of preceding clusters */
 	/* the following are only valid if cluster_offset == 0 */
 	std::vector<char> data;
-	const char *path;  /* path down from g_target_dir */
+	const char *path;  /* path down from g_top_dir */
 	uint32_t last_cluster;
 };
 
@@ -148,7 +158,7 @@ std::vector<struct dir_cluster> dir_clusters;
 
 int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 {
-	int clusters_needed;
+	uint32_t clusters_needed;
 	struct dir_cluster *dir;
 	struct dir_cluster *chunk;
 
@@ -281,6 +291,12 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 
 	if (parent_clust > dir_clusters.size() + 2)
 		return -1;
+	/* special case for the root directory, which is found in cluster 2
+	 * but which must be referred to as cluster 0 in directory entries,
+	 * so it's convenient to correct for it here so that callers don't
+	 * have to. */
+	if (parent_clust == 0)
+		parent_clust = 2;
 	parent = &dir_clusters[parent_clust - 2];
 
 	/* Check if the result will fit in the allocated space */
@@ -482,6 +498,108 @@ void init_fsinfo_sector(void)
 	memcpy(&fsinfo_sector[0x1fc], "\0\0\x55\xaa", 4);  /* magic here too */
 }
 
+static int convert_name(const char *name8, int namelen, filename_t & name16)
+{
+	ConversionResult result;
+	const uint8_t *inp = (const uint8_t *) name8;
+	uint16_t *bufp;
+
+	/* VFAT filenames have to be in UTF-16. Linux filenames
+	 * aren't in any particular encoding, but nearly all
+	 * systems use UTF-8 these days. */
+
+	/* name16 is passed in to receive the result. */
+	name16.clear();
+	/* The worst case is that name8 is pure ASCII so each byte
+	 * expands to one 16-bit element, so make enough space for that
+	 * plus a terminating NUL */
+	name16.resize(namelen + 1);
+
+	bufp = &name16[0];
+
+	result = ConvertUTF8toUTF16LE(&inp, inp + namelen,
+		&bufp, bufp + namelen, strictConversion);
+	if (result != conversionOK)
+		return -1;
+
+	/* The conversion routine will have set bufp to point just
+	 * past the end of the converted data. Anything past that
+	 * will be junk, so shrink the name to leave that out. */
+	*bufp++ = 0;
+	name16.resize(bufp - &name16[0] + 1);
+	return 0;
+}
+
+static void scan_fts(FTS *ftsp, FTSENT *entp)
+{
+	uint32_t clust;
+	uint32_t parent;
+	filename_t name;
+
+	/*
+	 * The scan makes use of entp->fts_number, which is a field
+	 * reserved for our use. For directories we store the cluster
+	 * number there, so that we can look it up when scanning the
+	 * directory's children. The field is initialized to 0, so
+	 * 0 means the root directory.
+	 */
+	switch (entp->fts_info) {
+		case FTS_D: /* directory, first visit */
+			if (entp->fts_level == 0) /* root dir is already made */
+				break;
+			if (convert_name(entp->fts_name,
+				entp->fts_namelen, name) < 0) {
+				/* directory name couldn't be represented.
+				 * skip it and its children. */
+				fts_set(ftsp, entp, FTS_SKIP);
+				break;
+			}
+			clust = alloc_new_dir(entp->fts_path);
+			parent = entp->fts_parent->fts_number;
+			
+			/* link the new directory into the hierarchy */
+			add_dir_entry(clust, clust, dot_name, 0, true,
+				entp->fts_statp->st_mtime);
+			add_dir_entry(clust, parent, dot_dot_name, 0, true,
+				entp->fts_parent->fts_statp->st_mtime);
+			add_dir_entry(parent, clust, name, 0, true,
+				entp->fts_statp->st_mtime);
+			entp->fts_number = clust;
+			break;
+
+		case FTS_F: /* normal file */
+			break;
+
+		case FTS_DP: /* directory, second visit (after all children) */
+			break;
+
+		default:
+			/* Ignore anything else: unstattable files,
+			 * unreadable directories, symbolic links, etc.
+			 * It won't be representable in the FAT anyway. */
+			break;
+	}
+}
+
+void scan_target_dir(void)
+{
+	FTS *ftsp;
+	FTSENT *entp;
+	/* fts_open takes a (char * const *) array, and there's no
+	 * way to get a (const char *) into that array without forcing
+	 * something. fts_open does intend to leave the strings alone,
+	 * so it's safe. */
+	char *path_argv[] = { (char *) g_top_dir, 0 };
+
+	/* FTS is a glibc helper for scanning directory trees */
+	ftsp = fts_open(path_argv, FTS_PHYSICAL | FTS_XDEV, NULL);
+	while ((entp = fts_read(ftsp)))
+		scan_fts(ftsp, entp);
+
+	fts_close(ftsp);
+	
+}
+
 void vfat_init(const char *target_dir, uint64_t free_space)
 {
 	g_top_dir = target_dir;
@@ -502,18 +620,16 @@ void vfat_init(const char *target_dir, uint64_t free_space)
 
 	alloc_new_dir("."); /* create empty root directory */
 
-	/* for testing */
-	int t_clust = alloc_new_dir("ts");
-	filename_t dot_name;
+	dot_name.clear();
 	dot_name.push_back(htole16('.'));
 	dot_name.push_back(0);
-	add_dir_entry(t_clust, t_clust, dot_name, 0, true, time(NULL));
-	dot_name[1] = htole16('.');
-	dot_name.push_back(0);
-	add_dir_entry(t_clust, 0, dot_name, 0, true, time(NULL));
-	dot_name[0] = htole16('t');
-	dot_name[1] = htole16('s');
-	add_dir_entry(2, t_clust, dot_name, 0, true, time(NULL));
+
+	dot_dot_name.clear();
+	dot_dot_name.push_back(htole16('.'));
+	dot_dot_name.push_back(htole16('.'));
+	dot_dot_name.push_back(0);
+
+	scan_target_dir();
 }
 
 /* TODO: do something about the hidden coupling between this function
