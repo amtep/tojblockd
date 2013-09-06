@@ -20,6 +20,7 @@
 
 #include <endian.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -509,6 +510,8 @@ void dir_fill(void *vbuf, uint32_t clust_nr, uint32_t offset, uint32_t maxcopy)
 
 int vfat_fill(void *buf, uint64_t from, uint32_t len)
 {
+	int ret = 0;
+
 	while (len > 0) {
 		uint32_t maxcopy = len;
 		uint32_t sector_nr = from / SECTOR_SIZE;
@@ -547,23 +550,62 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 				* SECTOR_SIZE;
 			uint32_t data_cluster = (adj / CLUSTER_SIZE) + 2;
 			uint32_t offset = adj % CLUSTER_SIZE;
-			maxcopy = min(len, CLUSTER_SIZE - offset);
 			if (data_cluster < first_free_cluster()) {
+				maxcopy = min(len, CLUSTER_SIZE - offset);
 				dir_fill(buf, data_cluster, offset, maxcopy);
-			} else {
+			} else if (data_cluster <= last_free_cluster()) {
+				maxcopy = min(len, (uint64_t)
+					(last_free_cluster() + 1
+					- data_cluster) * CLUSTER_SIZE
+					- offset);
 				memset(buf, 0, maxcopy);
+			} else {
+				int file_idx = filemap_find(data_cluster);
+				if (file_idx < 0) {
+					maxcopy = min(len, CLUSTER_SIZE - offset);
+					memset(buf, 0, maxcopy);
+				} else {
+					struct filemap_info & fm = filemaps[file_idx];
+					int fd;
+					int nread;
+					int file_offset = (data_cluster - fm.starting_cluster) * CLUSTER_SIZE + offset;
+					maxcopy = min(len, (fm.ending_cluster + 1 - data_cluster) * CLUSTER_SIZE - offset);
+
+					fd = open(fm.path, O_RDONLY);
+					if (fd < 0) {
+						ret = errno;
+						break;
+					}
+					if (lseek(fd, file_offset, SEEK_SET) == (off_t) -1) {
+						ret = errno;
+						break;
+					}
+					nread = read(fd, buf, maxcopy);
+					if (nread < 0) {
+						ret = errno;
+						close(fd);
+						break;
+					}
+					/* past size of file? */
+					if ((uint32_t) nread < maxcopy)
+						memset((char *) buf + nread,
+							0, maxcopy - nread);
+					close(fd);
+				}
 			}
 		} else {
 			/* past end of image */
-			memset(buf, 0, len);
-			return -EINVAL;
+			ret = -EINVAL;
+			break;
 		}
 		len -= maxcopy;
 		buf = (char *) buf + maxcopy;
 		from += maxcopy;
 	}
 
-	return 0;
+	if (ret && len)
+		memset(buf, 0, len);
+	return ret;
 }
 
 void init_boot_sector(void)

@@ -214,7 +214,8 @@ void serve(int sock_fd)
 			buf = malloc(req.len);
 			err = vfat_fill(buf, req.from, req.len);
 			send_reply(sock_fd, req.handle, err);
-			write_buf(sock_fd, buf, req.len);
+			if (!err)
+				write_buf(sock_fd, buf, req.len);
 			free(buf);
 			break;
 		case NBD_CMD_WRITE:
