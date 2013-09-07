@@ -508,12 +508,61 @@ void dir_fill(void *vbuf, uint32_t clust_nr, uint32_t offset, uint32_t maxcopy)
 		memcpy(buf, &dir->data[0] + src_offset, maxcopy);
 }
 
+int file_fill(void *buf, uint32_t len, uint32_t clust_nr, uint32_t offset,
+	uint32_t *filled)
+{
+	int ret = 0;
+	int fd = -1;
+	int file_idx = filemap_find(clust_nr);
+
+	if (file_idx < 0) {
+		*filled = min(len, CLUSTER_SIZE - offset);
+		memset(buf, 0, *filled);
+	} else {
+		struct filemap_info & fm = filemaps[file_idx];
+		int nread;
+		int file_offset = (clust_nr - fm.starting_cluster)
+			* CLUSTER_SIZE + offset;
+		*filled = min(len, (fm.ending_cluster + 1 - clust_nr)
+			* CLUSTER_SIZE - offset);
+
+		fd = open(fm.path, O_RDONLY);
+		if (fd < 0)
+			goto err;
+
+		if (lseek(fd, file_offset, SEEK_SET) == (off_t) -1)
+			goto err;
+
+		nread = read(fd, buf, *filled);
+		if (nread < 0)
+			goto err;
+
+		/* past size of file? */
+		if ((uint32_t) nread < *filled)
+			memset((char *) buf + nread, 0, *filled - nread);
+		close(fd);
+	}
+
+	return 0;
+
+err:
+	ret = errno;
+	if (fd >= 0)
+		close(fd);
+	return ret;
+}
+
 int vfat_fill(void *buf, uint64_t from, uint32_t len)
 {
 	int ret = 0;
 
-	while (len > 0) {
-		uint32_t maxcopy = len;
+	/*
+	 * This is structured as a loop so that each clause can handle
+	 * just the case it's focused on and then pass the buck
+	 * by setting maxcopy smaller than len.
+	 */
+	while (len > 0 && ret == 0) {
+		uint32_t maxcopy = 0;
 		uint32_t sector_nr = from / SECTOR_SIZE;
 		if (sector_nr < RESERVED_SECTORS) {
 			uint32_t offset = from % SECTOR_SIZE;
@@ -560,43 +609,12 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 					- offset);
 				memset(buf, 0, maxcopy);
 			} else {
-				int file_idx = filemap_find(data_cluster);
-				if (file_idx < 0) {
-					maxcopy = min(len, CLUSTER_SIZE - offset);
-					memset(buf, 0, maxcopy);
-				} else {
-					struct filemap_info & fm = filemaps[file_idx];
-					int fd;
-					int nread;
-					int file_offset = (data_cluster - fm.starting_cluster) * CLUSTER_SIZE + offset;
-					maxcopy = min(len, (fm.ending_cluster + 1 - data_cluster) * CLUSTER_SIZE - offset);
-
-					fd = open(fm.path, O_RDONLY);
-					if (fd < 0) {
-						ret = errno;
-						break;
-					}
-					if (lseek(fd, file_offset, SEEK_SET) == (off_t) -1) {
-						ret = errno;
-						break;
-					}
-					nread = read(fd, buf, maxcopy);
-					if (nread < 0) {
-						ret = errno;
-						close(fd);
-						break;
-					}
-					/* past size of file? */
-					if ((uint32_t) nread < maxcopy)
-						memset((char *) buf + nread,
-							0, maxcopy - nread);
-					close(fd);
-				}
+				ret = file_fill(buf, len, data_cluster,	
+					offset, &maxcopy);
 			}
 		} else {
 			/* past end of image */
-			ret = -EINVAL;
-			break;
+			ret = EINVAL;
 		}
 		len -= maxcopy;
 		buf = (char *) buf + maxcopy;
