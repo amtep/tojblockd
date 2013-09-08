@@ -81,11 +81,11 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
 static const char *g_top_dir;
-static uint64_t g_free_space;
 
 static uint32_t g_fat_sectors;
 static uint32_t g_data_clusters;
 static uint32_t g_total_sectors;
+static uint32_t g_max_free_clusters;
 
 /* All multibyte values in here are stored in little-endian format */
 uint8_t boot_sector[SECTOR_SIZE] = {
@@ -441,6 +441,8 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 	uint32_t *buf = (uint32_t *)vbuf;
 	uint32_t i = 0;
 	uint32_t first_file = last_free_cluster() + 1;
+	uint32_t first_blocked = min(first_file,
+		first_free_cluster() + g_max_free_clusters);
 	uint32_t count;
 	int file_idx;
 
@@ -450,11 +452,24 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 		i = count;
 	}
 
-	if (entry_nr + i < first_file) {
+	/*
+	 * The unused space between the directories and the files is
+	 * divided into an unallocated part and a marked-unusable part.
+	 * This is so that we don't report more free space than the
+	 * host filesystem actually has.
+	 */
+	if (entry_nr + i < first_blocked) {
 		/* unallocated clusters */
-		count = min(entries - i, first_file - entry_nr - i);
+		count = min(entries - i, first_blocked - entry_nr - i);
 		memset(&buf[i], 0, count * 4);
 		i += count;
+	}
+
+	if (entry_nr + i < first_file) {
+		/* unusable clusters */
+		count = min(entries - i, first_file - entry_nr - i);
+		while (count--)
+			buf[i++] = htole32(FAT_BAD_CLUSTER);
 	}
 
 	if (i == entries)
@@ -773,7 +788,7 @@ void scan_target_dir(void)
 void vfat_init(const char *target_dir, uint64_t free_space)
 {
 	g_top_dir = target_dir;
-	g_free_space = free_space;
+	g_max_free_clusters = free_space / CLUSTER_SIZE;
 
 	init_boot_sector();
 	init_fsinfo_sector();
