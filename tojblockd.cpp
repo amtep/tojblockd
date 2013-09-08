@@ -247,6 +247,27 @@ void parse_opts(int argc, char **argv)
 	}
 }
 
+void daemonize(void)
+{
+	pid_t pid;
+
+	/* fork out of the current context and continue as the child */
+
+	pid = fork();
+	if (pid < 0)
+		fatal("could not daemonize: fork: %s", strerror(errno));
+	if (pid > 0)
+		exit(0);  /* parent exits */
+
+	umask(0);
+	setsid();  /* start own process group */
+	/* Don't hold open anything inherited from the shell */
+	chdir("/");
+	freopen("/dev/null", "r", stdin);
+	freopen("/dev/null", "w", stdout);
+	freopen("/dev/null", "w", stderr);
+}
+
 int main(int argc, char **argv)
 {
 	const char *target_dir = 0;
@@ -293,7 +314,8 @@ int main(int argc, char **argv)
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
 		fatal("could not open socket pair: %s", strerror(errno));
 
-	/* TODO: --daemonize */
+	if (opt_daemonize)
+		daemonize();
 
 	if (fork()) {
 		/* child */
