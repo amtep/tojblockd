@@ -413,23 +413,28 @@ uint32_t map_file(const char *name, uint32_t size)
  * or -1 if there is no such file. */
 int filemap_find(uint32_t clust_nr)
 {
-	int file_idx;
+	int h, l, m;
 
 	/* short-circuit common case */
 	if (clust_nr <= last_free_cluster())
 		return -1;
 
-	/* TODO: binary search */
-	for (file_idx = filemaps.size() - 1; file_idx > 0; file_idx--) {
-		if (filemaps[file_idx - 1].starting_cluster > clust_nr)
-			return file_idx;
+	l = 0;
+	h = filemaps.size() - 1;
+	while (l <= h) {
+		m = (h + l) / 2;
+		/* If this seems reversed, it's because filemaps are
+		 * sorted by descending starting cluster */
+		if (clust_nr < filemaps[m].starting_cluster) {
+			l = m + 1;
+		} else if (clust_nr > filemaps[m].ending_cluster) {
+			h = m - 1;
+		} else {
+			return m;
+		}
 	}
-	/* Not found. It must be in the last file, unless it's actually
-	 * past the end of the image. */
 
-	if (clust_nr > filemaps[0].ending_cluster)
-		return -1;
-	return 0;
+	return -1; /* not found */
 }
 
 /*
