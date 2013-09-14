@@ -15,6 +15,7 @@
 
 #include "vfat.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -844,5 +845,14 @@ uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 	g_data_clusters = data_clusters;
 	g_total_sectors = RESERVED_SECTORS + fat_sectors
 		+ data_clusters * SECTORS_PER_CLUSTER;
+	fprintf(stderr, "Image size %lu sectors, %lu reserved, %lu FAT\n",
+		(unsigned long) g_total_sectors,
+		(unsigned long) RESERVED_SECTORS,
+		(unsigned long) g_fat_sectors);
+	fprintf(stderr, "Sector size %d, cluster size %d\n",
+		SECTOR_SIZE, CLUSTER_SIZE);
+	fprintf(stderr, "Contains %lu data clusters starting at 0x%llx\n",
+		(unsigned long) g_data_clusters,
+		(unsigned long long) (RESERVED_SECTORS + g_fat_sectors) * SECTOR_SIZE);
 	return g_total_sectors;
 }
