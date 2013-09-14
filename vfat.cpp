@@ -706,7 +706,7 @@ static int convert_name(const char *name8, int namelen, filename_t & name16)
 	 * past the end of the converted data. Anything past that
 	 * will be junk, so shrink the name to leave that out. */
 	*bufp++ = 0;
-	name16.resize(bufp - &name16[0] + 1);
+	name16.resize(bufp - &name16[0]);
 	return 0;
 }
 
