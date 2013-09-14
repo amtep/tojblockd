@@ -323,7 +323,7 @@ int main(int argc, char **argv)
 	// is simple and could be used by any service launcher.
 	// Just pass in the name of a unix dgram socket in $NOTIFY_SOCKET
 	// and listen for a packet with the line "READY=1".
-	if (fork()) {
+	if (fork() == 0) {
 		/* child */
 
 		close(sv[0]);
