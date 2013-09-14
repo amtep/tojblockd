@@ -211,7 +211,7 @@ void serve(int sock_fd)
 
 		switch (req.type) {
 		case NBD_CMD_READ:
-			info("READ %u bytes starting 0x%lx\n", req.len, req.from);
+			info("READ %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
 			buf = malloc(req.len);
 			err = vfat_fill(buf, req.from, req.len);
 			send_reply(sock_fd, req.handle, err);
@@ -220,7 +220,7 @@ void serve(int sock_fd)
 			free(buf);
 			break;
 		case NBD_CMD_WRITE:
-			info("WRITE %u bytes starting 0x%lx\n", req.len, req.from);
+			info("WRITE %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
 			buf = malloc(req.len);
 			read_buf(sock_fd, buf, req.len);
 			free(buf);

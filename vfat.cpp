@@ -616,7 +616,7 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 				fat_fill(buf, entry_nr, maxcopy / 4);
 			}
 		} else if (sector_nr < g_total_sectors) {
-			uint32_t adj = from - (RESERVED_SECTORS + g_fat_sectors)
+			uint64_t adj = from - (RESERVED_SECTORS + g_fat_sectors)
 				* SECTOR_SIZE;
 			uint32_t data_cluster = (adj / CLUSTER_SIZE) + 2;
 			uint32_t offset = adj % CLUSTER_SIZE;
