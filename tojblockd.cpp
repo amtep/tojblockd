@@ -34,6 +34,7 @@
 
 #include "nbd.h"
 #include "vfat.h"
+#include "sd_notify.h"
 
 #ifndef PROGRAM_NAME
 #define PROGRAM_NAME "tojblockd"
@@ -317,11 +318,19 @@ int main(int argc, char **argv)
 	if (opt_daemonize)
 		daemonize();
 
+	// This server uses sd_notify to indicate when it's ready to
+	// serve I/O requests. sd_notify is from systemd but the protocol
+	// is simple and could be used by any service launcher.
+	// Just pass in the name of a unix dgram socket in $NOTIFY_SOCKET
+	// and listen for a packet with the line "READY=1".
 	if (fork()) {
 		/* child */
 
 		close(sv[0]);
+		// vfat_init could take a while to say what's going on
+		sd_notify(0, "STATUS=scanning directory tree");
 		vfat_init(target_dir, free_space);
+		sd_notify(1, "READY=1\nSTATUS=ready");
 		serve(sv[1]);
 	} else {
 		/* parent */
