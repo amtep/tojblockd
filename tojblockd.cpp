@@ -47,6 +47,7 @@
 static int opt_help;
 static int opt_version;
 static int opt_daemonize;
+static int opt_debug;
 static const char *opt_device = "/dev/nbd0";
 static const char *program_name;
 
@@ -55,6 +56,7 @@ static struct option options[] = {
 	{ "version", no_argument, &opt_version, 1 },
 	{ "daemonize", no_argument, &opt_daemonize, 1 },
 	{ "device", required_argument, NULL, 'd' },
+	{ "debug", no_argument, &opt_debug, 1 },
 
 	{ 0, 0, 0, 0 }
 };
@@ -68,6 +70,7 @@ void usage(FILE *out)
 		"  --daemonize  Fork away from the shell and run as a daemon\n"
 		"  --device=DEVICE  Open the given network block device\n"
 		"      instead of the default /dev/nbd0\n"
+		"  --debug      Print log messages that help with debugging\n"
 		"This program will read a directory (and its subdirectories)\n"
 		"and present it as a network block device in UDF format.\n"
 		"The network block device can then be mounted normally.\n"
@@ -79,6 +82,16 @@ void usage(FILE *out)
 		"  * Files created while the program runs may not be included\n"
 		"    in the UDF image\n"
 		, program_name, program_name, program_name);
+}
+
+void debug(const char *fmt, ...)
+{
+	va_list va;
+	if (!opt_debug)
+		return;
+	va_start(va, fmt);
+	vfprintf(stderr, fmt, va);
+	va_end(va);
 }
 
 void info(const char *fmt, ...)
@@ -211,7 +224,7 @@ void serve(int sock_fd)
 
 		switch (req.type) {
 		case NBD_CMD_READ:
-			info("READ %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
+			debug("READ %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
 			buf = malloc(req.len);
 			err = vfat_fill(buf, req.from, req.len);
 			send_reply(sock_fd, req.handle, err);
@@ -220,7 +233,7 @@ void serve(int sock_fd)
 			free(buf);
 			break;
 		case NBD_CMD_WRITE:
-			info("WRITE %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
+			debug("WRITE %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
 			buf = malloc(req.len);
 			read_buf(sock_fd, buf, req.len);
 			free(buf);
