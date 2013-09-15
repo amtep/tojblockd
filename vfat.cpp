@@ -499,8 +499,10 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 		for ( ; i < entries; i++) {
 			if (entry_nr + i == fm->ending_cluster) {
 				buf[i] = htole32(FAT_END_OF_CHAIN);
-				if (fm == &filemaps[0])
+				if (fm == &filemaps[0]) { // past end
+					i++;
 					break;
+				}
 				fm--;
 			} else {
 				buf[i] = htole32(entry_nr + i + 1);
