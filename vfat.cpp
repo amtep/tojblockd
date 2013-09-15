@@ -308,9 +308,22 @@ void encode_datetime(uint8_t *buf, time_t stamp)  /* 4-byte buffer */
 	buf[3] = (date_part >> 8) & 0xff;
 }
 
+void encode_date(uint8_t *buf, time_t stamp)  /* 2-byte buffer */
+{
+	struct tm *t = gmtime(&stamp);
+	uint16_t date_part;
+
+	/* struct tm measures years from 1900, but FAT measures from 1980 */
+	date_part = (t->tm_mday) | ((t->tm_mon + 1) << 5)
+		| ((t->tm_year - 80) << 9);
+
+	buf[0] = date_part & 0xff;
+	buf[1] = (date_part >> 8) & 0xff;
+}
+
 int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 	const filename_t &filename, uint32_t file_size, bool is_dir,
-	time_t mtime)
+	time_t mtime, time_t atime)
 {
 	struct dir_cluster *parent;
 	int num_entries;
@@ -354,9 +367,7 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 	/* this field calls for creation time but we don't have that, so
 	 * substitute last modification time */
 	encode_datetime(&short_entry[14], mtime);  /* 4 bytes */
-	/* last access date, which is optional */
-	short_entry[18] = 0;
-	short_entry[19] = 0;
+	encode_date(&short_entry[18], atime); /* 2 bytes */
 	short_entry[20] = (entry_clust >> 16) & 0xff;
 	short_entry[21] = (entry_clust >> 24) & 0xff;
 	encode_datetime(&short_entry[22], mtime);
@@ -740,11 +751,14 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 			
 			/* link the new directory into the hierarchy */
 			add_dir_entry(clust, clust, dot_name, 0, true,
-				entp->fts_statp->st_mtime);
+				entp->fts_statp->st_mtime,
+				entp->fts_statp->st_atime);
 			add_dir_entry(clust, parent, dot_dot_name, 0, true,
-				entp->fts_parent->fts_statp->st_mtime);
+				entp->fts_parent->fts_statp->st_mtime,
+				entp->fts_parent->fts_statp->st_atime);
 			add_dir_entry(parent, clust, name, 0, true,
-				entp->fts_statp->st_mtime);
+				entp->fts_statp->st_mtime,
+				entp->fts_statp->st_atime);
 			entp->fts_number = clust;
 			break;
 
@@ -758,7 +772,8 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 			parent = entp->fts_parent->fts_number;
 			clust = map_file(entp->fts_path, size);
 			add_dir_entry(parent, clust, name, size, false,
-				entp->fts_statp->st_mtime);
+				entp->fts_statp->st_mtime,
+				entp->fts_statp->st_atime);
 			break;
 
 		case FTS_DP: /* directory, second visit (after all children) */
