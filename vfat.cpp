@@ -772,7 +772,10 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 				entp->fts_namelen, name) < 0)
 				break;  /* can't represent name */
 			parent = entp->fts_parent->fts_number;
-			clust = map_file(entp->fts_path, size);
+			if (size > 0)
+				clust = map_file(entp->fts_path, size);
+			else
+				clust = 0;
 			add_dir_entry(parent, clust, name, size, false,
 				entp->fts_statp->st_mtime,
 				entp->fts_statp->st_atime);
