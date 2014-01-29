@@ -13,6 +13,11 @@
  * GNU General Public License for more details.
 */
 
+/*
+ * This file is a C++ file in order to get the convenience of std::vector.
+ * The style is otherwise C though, and it follows C idioms.
+ */
+
 #include "vfat.h"
 
 #include <stdio.h>
@@ -73,9 +78,9 @@
  * Entries 0x0ffffff0 and higher are reserved, as are 0 and 1. */
 #define MAX_FAT32_CLUSTERS (0x0ffffff0 - 2)
 
+/* These special values are predefined by the FAT specification */
 #define FAT_END_OF_CHAIN 0x0fffffff
 #define FAT_BAD_CLUSTER  0x0ffffff7
-
 
 /* The traditional definition of min, unsafe against side effects in a or b
  * but at least not limiting the types of a or b */
@@ -159,8 +164,7 @@ std::vector<struct dir_cluster> dir_clusters;
 
 /*
  * Files are laid out without fragmentation in our FAT, so the only
- * cluster info needed is the starting cluster and the number of
- * clusters.
+ * cluster info needed is the range of clusters allocated for them.
  */
 struct filemap_info {
 	uint32_t starting_cluster;
