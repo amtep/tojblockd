@@ -133,6 +133,7 @@ uint8_t boot_sector[SECTOR_SIZE] = {
 	0x29,  /* indicates next 3 fields are valid */
 #define VOLUME_ID_OFFSET 0x43
 	0, 0, 0, 0,  /* volume serial number, try to be unique */
+#define VOLUME_LABEL_OFFSET 0x47
 	'T', 'O', 'J', 'B', 'L', 'O', 'C', 'K', 'F', 'S', ' ',  /* label */
 	'F', 'A', 'T', '3', '2', ' ', ' ', ' ',  /* filesystem type */
 	0, /* the rest is zero filled */
@@ -671,7 +672,7 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 	return ret;
 }
 
-void init_boot_sector(void)
+void init_boot_sector(const char *label)
 {
 	uint32_t volume_id = time(NULL);
 
@@ -689,6 +690,12 @@ void init_boot_sector(void)
 	boot_sector[VOLUME_ID_OFFSET + 1] = volume_id >> 8;
 	boot_sector[VOLUME_ID_OFFSET + 2] = volume_id >> 16;
 	boot_sector[VOLUME_ID_OFFSET + 3] = volume_id >> 24;
+
+	if (label) {
+		size_t len = strnlen(label, 11);
+		memcpy(boot_sector + VOLUME_LABEL_OFFSET, label, len);
+		memset(boot_sector + VOLUME_LABEL_OFFSET + len, ' ', 11 - len);
+	}
 }
 
 void init_fsinfo_sector(void)
@@ -826,12 +833,12 @@ void scan_target_dir(void)
 	
 }
 
-void vfat_init(const char *target_dir, uint64_t free_space)
+void vfat_init(const char *target_dir, uint64_t free_space, const char *label)
 {
 	g_top_dir = target_dir;
 	g_max_free_clusters = free_space / CLUSTER_SIZE;
 
-	init_boot_sector();
+	init_boot_sector(label);
 	init_fsinfo_sector();
 
 	/* entry 0 contains the media descriptor in its low byte,

@@ -49,6 +49,7 @@ static int opt_version;
 static int opt_daemonize;
 static int opt_debug;
 static const char *opt_device = "/dev/nbd0";
+static const char *opt_label;
 static const char *program_name;
 
 static struct option options[] = {
@@ -56,6 +57,7 @@ static struct option options[] = {
 	{ "version", no_argument, &opt_version, 1 },
 	{ "daemonize", no_argument, &opt_daemonize, 1 },
 	{ "device", required_argument, NULL, 'd' },
+	{ "label", required_argument, NULL, 'l' },
 	{ "debug", no_argument, &opt_debug, 1 },
 
 	{ 0, 0, 0, 0 }
@@ -70,9 +72,10 @@ void usage(FILE *out)
 		"  --daemonize  Fork away from the shell and run as a daemon\n"
 		"  --device=DEVICE  Open the given network block device\n"
 		"      instead of the default /dev/nbd0\n"
+		"  --label=LABEL  Use the given label as the volume label\n"
 		"  --debug      Print log messages that help with debugging\n"
 		"This program will read a directory (and its subdirectories)\n"
-		"and present it as a network block device in UDF format.\n"
+		"and present it as a network block device in FAT32 format.\n"
 		"The network block device can then be mounted normally.\n"
 		"The intended use is to export the block device as a raw\n"
 		"device (for example via the USB mass storage function)\n"
@@ -80,7 +83,7 @@ void usage(FILE *out)
 		"Limitations:\n"
 		"  * Currently read-only\n"
 		"  * Files created while the program runs may not be included\n"
-		"    in the UDF image\n"
+		"    in the FAT image\n"
 		, program_name, program_name, program_name);
 }
 
@@ -258,6 +261,8 @@ void parse_opts(int argc, char **argv)
 			exit(2);
 		if (c == 'd') /* --device */
 			opt_device = optarg;
+		if (c == 'l') /* --label */
+			opt_label = optarg;
 	}
 }
 
@@ -342,7 +347,7 @@ int main(int argc, char **argv)
 		close(sv[0]);
 		// vfat_init could take a while to say what's going on
 		sd_notify(0, "STATUS=scanning directory tree");
-		vfat_init(target_dir, free_space);
+		vfat_init(target_dir, free_space, opt_label);
 		sd_notify(1, "READY=1\nSTATUS=ready");
 		serve(sv[1]);
 	} else {
