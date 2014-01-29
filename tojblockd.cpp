@@ -253,7 +253,7 @@ void parse_opts(int argc, char **argv)
 
 	program_name = argv[0];
 
-	while ((c = getopt_long(argc, argv, "", options, NULL) >= 0)) {
+	while ((c = getopt_long(argc, argv, "", options, NULL)) >= 0) {
 		if (c == '?') /* getopt already printed an error msg */
 			exit(2);
 		if (c == 'd') /* --device */
