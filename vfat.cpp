@@ -780,7 +780,7 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 
 		case FTS_F: /* normal file */
 			size = entp->fts_statp->st_size;
-			if ((uint32_t) size != size)
+			if ((off_t) (uint32_t) size != size)
 				break;  /* can't represent size */
 			if (convert_name(entp->fts_name,
 				entp->fts_namelen, name) < 0)
