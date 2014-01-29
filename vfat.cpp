@@ -6,7 +6,7 @@
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation; either version 2
  * of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -81,6 +81,16 @@
 /* These special values are predefined by the FAT specification */
 #define FAT_END_OF_CHAIN 0x0fffffff
 #define FAT_BAD_CLUSTER  0x0ffffff7
+
+/* The attribute flags used in directory entries */
+#define FAT_ATTR_NONE      0x00
+#define FAT_ATTR_READ_ONLY 0x01
+#define FAT_ATTR_HIDDEN    0x02
+#define FAT_ATTR_SYSTEM    0x04
+#define FAT_ATTR_LABEL     0x08
+#define FAT_ATTR_DIRECTORY 0x10
+
+#define FAT_ATTR_LFN       0x0f  /* marker for long file name segments */
 
 /* The traditional definition of min, unsafe against side effects in a or b
  * but at least not limiting the types of a or b */
@@ -237,7 +247,7 @@ void fill_filename_part(char *data, int seq_nr, bool is_last,
 		data[0] = seq_nr | 0x40;
 	else
 		data[0] = seq_nr;
-	data[11] = 0x0f;  /* attributes: vfat entry */
+	data[11] = FAT_ATTR_LFN;
 	data[12] = 0;  /* reserved */
 	data[13] = checksum;
 	data[26] = 0;  /* cluster nr (unused) */
@@ -326,7 +336,7 @@ void encode_date(uint8_t *buf, time_t stamp)  /* 2-byte buffer */
 }
 
 int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
-	const filename_t &filename, uint32_t file_size, bool is_dir,
+	const filename_t &filename, uint32_t file_size, uint8_t attrs,
 	time_t mtime, time_t atime)
 {
 	struct dir_cluster *parent;
@@ -336,7 +346,6 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 	int data_offset;
 	uint8_t checksum;
 	uint8_t short_entry[DIR_ENTRY_SIZE];
-	uint8_t attrs;
 
 	if (parent_clust > dir_clusters.size() + 2)
 		return -1;
@@ -358,11 +367,9 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 		return ret;
 
 	prep_short_entry(short_entry);
-	attrs = 0x01;  /* always read-only */
-	if (is_dir) {
-		attrs |= 0x10;
+	attrs |= FAT_ATTR_READ_ONLY;  /* always read-only */
+	if (attrs & FAT_ATTR_DIRECTORY)
 		file_size = 0;
-	}
 	short_entry[11] = attrs;
 	short_entry[12] = 0;
 	/* Slightly higher resolution creation time.
@@ -756,13 +763,16 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 			parent = entp->fts_parent->fts_number;
 			
 			/* link the new directory into the hierarchy */
-			add_dir_entry(clust, clust, dot_name, 0, true,
+			add_dir_entry(clust, clust, dot_name, 0,
+                                FAT_ATTR_DIRECTORY,
 				entp->fts_statp->st_mtime,
 				entp->fts_statp->st_atime);
-			add_dir_entry(clust, parent, dot_dot_name, 0, true,
+			add_dir_entry(clust, parent, dot_dot_name, 0,
+                                FAT_ATTR_DIRECTORY,
 				entp->fts_parent->fts_statp->st_mtime,
 				entp->fts_parent->fts_statp->st_atime);
-			add_dir_entry(parent, clust, name, 0, true,
+			add_dir_entry(parent, clust, name, 0,
+                                FAT_ATTR_DIRECTORY,
 				entp->fts_statp->st_mtime,
 				entp->fts_statp->st_atime);
 			entp->fts_number = clust;
@@ -780,7 +790,8 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 				clust = map_file(entp->fts_path, size);
 			else
 				clust = 0;
-			add_dir_entry(parent, clust, name, size, false,
+			add_dir_entry(parent, clust, name, size,
+                                FAT_ATTR_NONE,
 				entp->fts_statp->st_mtime,
 				entp->fts_statp->st_atime);
 			break;
