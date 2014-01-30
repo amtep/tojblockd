@@ -374,7 +374,7 @@ void prep_short_entry(uint8_t *entry)  /* at least 11-byte buffer */
 
 void encode_datetime(uint8_t *buf, time_t stamp)  /* 4-byte buffer */
 {
-	struct tm *t = gmtime(&stamp);
+	struct tm *t = localtime(&stamp);
 	uint16_t time_part;
 	uint16_t date_part;
 
