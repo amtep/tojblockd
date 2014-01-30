@@ -125,11 +125,12 @@ void fatal(const char *fmt, ...)
 	exit(1);
 }
 
-static void set_read_only(int dev_fd)
+// read-only mode is "sticky" so unset it before starting
+static void set_read_write(int dev_fd)
 {
-	int read_only = 1;
+	int read_only = 0;
 	if (ioctl(dev_fd, BLKROSET, &read_only) < 0)
-		warning("could not set read-only mode\n");
+		warning("could not set read-write mode\n");
 }
 
 static void set_block_size(int dev_fd, unsigned long size)
@@ -227,7 +228,7 @@ static void serve(int sock_fd)
 
 		switch (req.type) {
 		case NBD_CMD_READ:
-			debug("READ %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
+			//debug("READ %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
 			buf = malloc(req.len);
 			err = vfat_fill(buf, req.from, req.len);
 			send_reply(sock_fd, req.handle, err);
@@ -326,7 +327,7 @@ int main(int argc, char **argv)
 	image_size = (uint64_t) target_st.f_frsize * target_st.f_blocks;
 	free_space = (uint64_t) target_st.f_frsize * target_st.f_bavail;
 
-	set_read_only(dev_fd); /* only read-only is supported, for now */
+	set_read_write(dev_fd);
 	set_block_size(dev_fd, block_size);
 	image_size = set_image_size(dev_fd, image_size, block_size);
 
