@@ -240,6 +240,12 @@ static void serve(int sock_fd)
 			debug("WRITE %lu bytes starting 0x%llx\n", (unsigned long) req.len, (unsigned long long) req.from);
 			buf = malloc(req.len);
 			read_buf(sock_fd, buf, req.len);
+			if (opt_debug && req.len <= 4096) {
+				uint8_t *bbuf = (uint8_t *) buf;
+				for (int offs = 0; offs < (int) req.len; offs += 16) {
+					debug("%04x %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x\n", offs, bbuf[offs + 0], bbuf[offs + 1], bbuf[offs + 2], bbuf[offs + 3], bbuf[offs + 4], bbuf[offs + 5], bbuf[offs + 6], bbuf[offs + 7], bbuf[offs + 8], bbuf[offs + 9], bbuf[offs + 10], bbuf[offs + 11], bbuf[offs + 12], bbuf[offs + 13], bbuf[offs + 14], bbuf[offs + 15]);
+				}
+			}
 			free(buf);
 			send_reply(sock_fd, req.handle, EROFS);
 			break;
