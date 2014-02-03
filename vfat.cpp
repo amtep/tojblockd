@@ -70,13 +70,17 @@
  * the free space in between.
  */
 
+/* The first two entries are special values that don't mark data clusters */
+#define RESERVED_FAT_ENTRIES 2
+#define ROOT_DIR_CLUSTER 2
+
 /* This is part of the FAT spec: a fatfs with less than this
  * number of clusters must be FAT12 or FAT16 */
 #define MIN_FAT32_CLUSTERS 65525
 /* Despite its name, FAT32 only uses 28 bits in its entries.
  * The top 4 bits should be cleared when allocating.
  * Entries 0x0ffffff0 and higher are reserved, as are 0 and 1. */
-#define MAX_FAT32_CLUSTERS (0x0ffffff0 - 2)
+#define MAX_FAT32_CLUSTERS (0x0ffffff0 - RESERVED_FAT_ENTRIES)
 
 /* These special values are predefined by the FAT specification */
 #define FAT_END_OF_CHAIN 0x0fffffff
@@ -124,7 +128,7 @@ uint8_t boot_sector[SECTOR_SIZE] = {
 	0, 0, 0, 0,  /* sectors per FAT */
 	0, 0,  /* flags about FAT usage, can be left 0 */
 	0, 0,  /* fat32 format version 0.0 */
-	2, 0, 0, 0,  /* cluster number of root directory */
+	ROOT_DIR_CLUSTER, 0, 0, 0,  /* cluster number of root directory */
 	1, 0,  /* location of filesystem information sector */
 	0, 0,  /* location of backup boot sector (none) */
 	0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  /* 12 bytes reserved */
@@ -222,7 +226,7 @@ static uint32_t first_free_cluster(void)
 static uint32_t last_free_cluster(void)
 {
 	if (filemaps.empty())
-		return g_data_clusters + 2 - 1;
+		return g_data_clusters + RESERVED_FAT_ENTRIES - 1;
 	return filemaps.back().starting_cluster - 1;
 }
 
@@ -421,7 +425,7 @@ int add_dir_entry(uint32_t parent_clust, uint32_t entry_clust,
 	 * so it's convenient to correct for it here so that callers don't
 	 * have to. */
 	if (parent_clust == 0)
-		parent_clust = 2;
+		parent_clust = ROOT_DIR_CLUSTER;
 
 	extent_nr = find_extent(parent_clust);
 	if (extent_nr < 0 || fat_extents[extent_nr].extent_type != EXTENT_DIR)
@@ -757,7 +761,8 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 		} else if (sector_nr < g_total_sectors) {
 			uint64_t adj = from - (RESERVED_SECTORS + g_fat_sectors)
 				* SECTOR_SIZE;
-			uint32_t data_cluster = (adj / CLUSTER_SIZE) + 2;
+			uint32_t data_cluster = (adj / CLUSTER_SIZE)
+				+ RESERVED_FAT_ENTRIES;
 			uint32_t offset = adj % CLUSTER_SIZE;
 			if (data_cluster < first_free_cluster()) {
 				maxcopy = min(len, CLUSTER_SIZE - offset);
@@ -993,7 +998,8 @@ uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 
 	/* first calculation is far too optimistic because we need fat space */
 	data_clusters = (sectors - RESERVED_SECTORS) / SECTORS_PER_CLUSTER;
-	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE) / SECTOR_SIZE;
+	fat_sectors = ALIGN((data_clusters + RESERVED_FAT_ENTRIES) * 4,
+		SECTOR_SIZE) / SECTOR_SIZE;
 
 	/* second calculation corrects for that */
 	data_clusters = (sectors - fat_sectors - RESERVED_SECTORS)
@@ -1002,7 +1008,8 @@ uint32_t vfat_adjust_size(uint32_t sectors, uint32_t sector_size)
 		data_clusters = MIN_FAT32_CLUSTERS;
 	if (data_clusters > MAX_FAT32_CLUSTERS)
 		data_clusters = MAX_FAT32_CLUSTERS;
-	fat_sectors = ALIGN((data_clusters + 2) * 4, SECTOR_SIZE) / SECTOR_SIZE;
+	fat_sectors = ALIGN((data_clusters + RESERVED_FAT_ENTRIES) * 4,
+		SECTOR_SIZE) / SECTOR_SIZE;
 
 	g_fat_sectors = fat_sectors;
 	g_data_clusters = data_clusters;
