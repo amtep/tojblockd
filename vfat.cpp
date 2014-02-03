@@ -85,6 +85,7 @@
 /* These special values are predefined by the FAT specification */
 #define FAT_END_OF_CHAIN 0x0fffffff
 #define FAT_BAD_CLUSTER  0x0ffffff7
+#define FAT_UNALLOCATED  0
 
 /* The attribute flags used in directory entries */
 #define FAT_ATTR_NONE      0x00
@@ -160,7 +161,7 @@ static filename_t dot_dot_name;  // contains ".."
  * Directories are allocated from the start of the FAT, but to make
  * the scanning code simpler they don't have to be allocated contiguously
  * the way mapped files are.
- * The fat_extents entries (defined below) point to these.
+ * The fat_extents entries (defined below) point to these if type is DIR.
  */
 struct dir_info {
 	uint32_t starting_cluster; /* number of first cluster of this dir */
@@ -175,12 +176,12 @@ struct dir_info {
 std::vector<struct dir_info> dir_infos;
 
 /*
- * Files are laid out without fragmentation in our FAT, so the only
- * cluster info needed is the range of clusters allocated for them.
+ * Information about mapped-in files.
+ * The fat_extents entries (defined below) point to these if type is FILEMAP.
+ * During vfat_scan(), those extents are kept in temp_fat_extents instead.
  */
 struct filemap_info {
 	uint32_t starting_cluster;
-	uint32_t ending_cluster;
 	const char *path;  /* path down from g_top_dir */
 };
 
@@ -194,8 +195,6 @@ std::vector<struct filemap_info> filemaps;
  * an end-of-chain marker at the end.
  */
 struct fat_extent {
-	/* TODO: if the fat_extents cover the whole image then one
-	 * of starting_cluster or ending_cluster is redundant. */
 	uint32_t starting_cluster;
 	uint32_t ending_cluster;
 	uint32_t index;  /* index to file or dir table, or literal value */
@@ -214,15 +213,27 @@ enum {
  * During vfat_init, this only holds the two dummy entries and the
  * directory info. Before the first user query can come in, it will
  * be finalized to include the unused space and the filemaps as well.
- * TODO: implement the finalization and simplify fat_fill()
  */
 std::vector<struct fat_extent> fat_extents;
 
-static uint32_t first_free_cluster(void)
+/*
+ * During vfat_init, the extents for mapped files are kept here
+ * separately, ordered from high to low clusters numbers.
+ * That allows it to grow efficiently before being reversed
+ * and appended to fat_extents.
+ */
+std::vector<struct fat_extent> temp_fat_extents;
+
+uint32_t g_first_free_cluster = RESERVED_FAT_ENTRIES;
+
+static uint32_t alloc_dir_clusters(uint32_t count)
 {
-	return fat_extents.back().ending_cluster + 1;
+	uint32_t temp = g_first_free_cluster;
+	g_first_free_cluster += count;
+	return temp;
 }
 
+// This is only valid during vfat_scan(), before finalize_fat() is called.
 static uint32_t last_free_cluster(void)
 {
 	if (filemaps.empty())
@@ -287,7 +298,8 @@ int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 
 		/* otherwise, allocate a new extent */
 		memset(&new_extent, 0, sizeof(new_extent));
-		new_extent.starting_cluster = first_free_cluster();
+		new_extent.starting_cluster =
+			alloc_dir_clusters(clusters_added);
 		new_extent.ending_cluster = new_extent.starting_cluster
 			+ clusters_added - 1;
 		new_extent.index = e->index;
@@ -487,7 +499,7 @@ uint32_t alloc_new_dir(const char *path)
 	struct fat_extent new_extent;
 
 	memset(&new_dir, 0, sizeof(new_dir));
-	new_dir.starting_cluster = first_free_cluster();
+	new_dir.starting_cluster = alloc_dir_clusters(1);
 	new_dir.last_extent = fat_extents.size(); // will be allocated below
 	new_dir.allocated = 1;
 	new_dir.path = strdup(path);
@@ -510,41 +522,22 @@ uint32_t map_file(const char *name, uint32_t size)
 {
 	uint32_t nr_clust = ALIGN(size, CLUSTER_SIZE) / CLUSTER_SIZE;
 	struct filemap_info fm;
+	struct fat_extent new_extent;
 
-	fm.ending_cluster = last_free_cluster();
-	fm.starting_cluster = fm.ending_cluster - nr_clust + 1;
+	memset(&new_extent, 0, sizeof(new_extent));
+	new_extent.ending_cluster = last_free_cluster();
+	new_extent.starting_cluster = new_extent.ending_cluster - nr_clust + 1;
+	new_extent.index = filemaps.size();
+	new_extent.offset = 0;
+	new_extent.next = FAT_END_OF_CHAIN;
+	new_extent.extent_type = EXTENT_FILEMAP;
+
+	fm.starting_cluster = new_extent.starting_cluster;
 	fm.path = strdup(name);
 
 	filemaps.push_back(fm);
+	temp_fat_extents.push_back(new_extent);
 	return fm.starting_cluster;
-}
-
-/* Return the number of the file mapped to the given cluster number,
- * or -1 if there is no such file. */
-int filemap_find(uint32_t clust_nr)
-{
-	int h, l, m;
-
-	/* short-circuit common case */
-	if (clust_nr <= last_free_cluster())
-		return -1;
-
-	l = 0;
-	h = (int) filemaps.size() - 1;
-	while (l <= h) {
-		m = (h + l) / 2;
-		/* If this seems reversed, it's because filemaps are
-		 * sorted by descending starting cluster */
-		if (clust_nr < filemaps[m].starting_cluster) {
-			l = m + 1;
-		} else if (clust_nr > filemaps[m].ending_cluster) {
-			h = m - 1;
-		} else {
-			return m;
-		}
-	}
-
-	return -1; /* not found */
 }
 
 /*
@@ -555,11 +548,6 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 {
 	uint32_t *buf = (uint32_t *)vbuf;
 	uint32_t i = 0;
-	uint32_t first_file = last_free_cluster() + 1;
-	uint32_t first_blocked = min(first_file,
-		first_free_cluster() + g_max_free_clusters);
-	uint32_t count;
-	int file_idx;
 
 	int extent_nr = find_extent(entry_nr);
 	while (extent_nr >= 0) {
@@ -567,7 +555,7 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 		if (fe->extent_type == EXTENT_LITERAL) {
 			while (entry_nr + i <= fe->ending_cluster
 			       && i < entries)
-				buf[i++] = fe->index;
+				buf[i++] = htole32(fe->index);
 		} else {
 			while (entry_nr + i < fe->ending_cluster
 			       && i < entries) {
@@ -588,131 +576,81 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 	}
 
 	/*
-	 * The unused space between the directories and the files is
-	 * divided into an unallocated part and a marked-unusable part.
-	 * This is so that we don't report more free space than the
-	 * host filesystem actually has.
-	 */
-	if (entry_nr + i < first_blocked) {
-		/* unallocated clusters */
-		count = min(entries - i, first_blocked - entry_nr - i);
-		memset(&buf[i], 0, count * 4);
-		i += count;
-	}
-
-	if (entry_nr + i < first_file) {
-		/* unusable clusters */
-		count = min(entries - i, first_file - entry_nr - i);
-		while (count--)
-			buf[i++] = htole32(FAT_BAD_CLUSTER);
-	}
-
-	if (i == entries)
-		return;
-
-	file_idx = filemap_find(entry_nr + i);
-	/* TODO: feels like this bit could be simplified */
-	if (file_idx >= 0) {
-		struct filemap_info *fm = &filemaps[file_idx];
-		for ( ; i < entries; i++) {
-			if (entry_nr + i == fm->ending_cluster) {
-				buf[i] = htole32(FAT_END_OF_CHAIN);
-				if (fm == &filemaps[0]) { // past end
-					i++;
-					break;
-				}
-				fm--;
-			} else {
-				buf[i] = htole32(entry_nr + i + 1);
-			}
-		}
-	}
-
-	/* Past end of data clusters. The FAT can still extend here
+	 * Past end of data clusters. The FAT can still extend here
 	 * because there might be unused space in the last FAT sector.
 	 * There doesn't seem to be a spec about what should be in that
 	 * unused space, but filling it with "bad cluster" markers
-	 * seems sensible. */
+	 * seems sensible.
+	 */
 	for (; i < entries; i++) {
 		buf[i] = htole32(FAT_BAD_CLUSTER);
 	}
 }
 
-void dir_fill(void *vbuf, uint32_t clust_nr, uint32_t offset, uint32_t maxcopy)
+int extent_fill(char *buf, uint32_t len, uint32_t clust_nr, uint32_t offset,
+	uint32_t *filled)
 {
-	char *buf = (char *) vbuf;
-	std::vector<char> *datap = 0;
-	uint32_t src_offset;
-
 	int extent_nr = find_extent(clust_nr);
-	if (extent_nr >= 0) {
-		struct fat_extent *fe = &fat_extents[extent_nr];
-		if (fe->extent_type == EXTENT_DIR) {
-			datap = &dir_infos[fe->index].data;
-			src_offset = (clust_nr - fe->starting_cluster)
-				* CLUSTER_SIZE + fe->offset + offset;
+	struct fat_extent *fe;
+	uint32_t src_offset;
+	int ret = 0;
+
+	if (extent_nr < 0)
+		return EINVAL;
+
+	fe = &fat_extents[extent_nr];
+
+	// Clip len if the current extent does not go that far
+	uint32_t end_clust_nr = clust_nr + (offset + len - 1) / CLUSTER_SIZE;
+	if (end_clust_nr > fe->ending_cluster)
+		len = (fe->ending_cluster - clust_nr + 1) * CLUSTER_SIZE
+			- offset;
+
+	src_offset = (clust_nr - fe->starting_cluster) * CLUSTER_SIZE
+		+ fe->offset + offset;
+
+	switch (fe->extent_type) {
+		case EXTENT_LITERAL:
+			// bad block or unallocated; return 0s either way
+			memset(buf, 0, len);
+			break;
+		case EXTENT_DIR: {
+			std::vector<char> *datap = &dir_infos[fe->index].data;
+			if (src_offset + len > datap->size()) {
+				uint32_t extra = src_offset + len - datap->size();
+				if (extra > len)
+					extra = len;
+				memcpy(buf, &datap->front() + src_offset,
+					len - extra);
+				memset(buf + len - extra, 0, extra);
+			}
+			break;
+		}
+		case EXTENT_FILEMAP: {
+			const char *path = filemaps[fe->index].path;
+			int nread;
+			int fd;
+
+			fd = open(path, O_RDONLY);
+			if (fd < 0)
+				return errno;
+
+			if (lseek(fd, src_offset, SEEK_SET) == (off_t) -1) {
+				ret = errno;
+				close(fd);
+				return ret;
+			}
+
+			nread = read(fd, buf, len);
+			if (nread < 0)
+				ret = errno;
+			else if ((uint32_t) nread < len) // past end of file
+				memset(buf + nread, 0, len - nread);
+			close(fd);
 		}
 	}
 
-	if (!datap) {
-		/* No directory found. Bail out */
-		memset(buf, 0, maxcopy);
-		return;
-	}
-
-	if (src_offset + maxcopy > datap->size()) {
-		uint32_t extra = src_offset + maxcopy - datap->size();
-		if (extra > maxcopy)
-			extra = maxcopy;
-		maxcopy -= extra;
-		memset(buf + maxcopy, 0, extra);
-	}
-
-	if (maxcopy)
-		memcpy(buf, &datap->front() + src_offset, maxcopy);
-}
-
-int file_fill(void *buf, uint32_t len, uint32_t clust_nr, uint32_t offset,
-	uint32_t *filled)
-{
-	int ret = 0;
-	int fd = -1;
-	int file_idx = filemap_find(clust_nr);
-
-	if (file_idx < 0) {
-		*filled = min(len, CLUSTER_SIZE - offset);
-		memset(buf, 0, *filled);
-	} else {
-		struct filemap_info & fm = filemaps[file_idx];
-		int nread;
-		int file_offset = (clust_nr - fm.starting_cluster)
-			* CLUSTER_SIZE + offset;
-		*filled = min(len, (fm.ending_cluster + 1 - clust_nr)
-			* CLUSTER_SIZE - offset);
-
-		fd = open(fm.path, O_RDONLY);
-		if (fd < 0)
-			goto err;
-
-		if (lseek(fd, file_offset, SEEK_SET) == (off_t) -1)
-			goto err;
-
-		nread = read(fd, buf, *filled);
-		if (nread < 0)
-			goto err;
-
-		/* past size of file? */
-		if ((uint32_t) nread < *filled)
-			memset((char *) buf + nread, 0, *filled - nread);
-		close(fd);
-	}
-
-	return 0;
-
-err:
-	ret = errno;
-	if (fd >= 0)
-		close(fd);
+	*filled = len;
 	return ret;
 }
 
@@ -764,19 +702,8 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 			uint32_t data_cluster = (adj / CLUSTER_SIZE)
 				+ RESERVED_FAT_ENTRIES;
 			uint32_t offset = adj % CLUSTER_SIZE;
-			if (data_cluster < first_free_cluster()) {
-				maxcopy = min(len, CLUSTER_SIZE - offset);
-				dir_fill(buf, data_cluster, offset, maxcopy);
-			} else if (data_cluster <= last_free_cluster()) {
-				maxcopy = min(len, (uint64_t)
-					(last_free_cluster() + 1
-					- data_cluster) * CLUSTER_SIZE
-					- offset);
-				memset(buf, 0, maxcopy);
-			} else {
-				ret = file_fill(buf, len, data_cluster,	
-					offset, &maxcopy);
-			}
+			ret = extent_fill((char *)buf, len, data_cluster,
+				offset, &maxcopy);
 		} else {
 			/* past end of image */
 			ret = EINVAL;
@@ -789,6 +716,47 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 	if (ret && len)
 		memset(buf, 0, len);
 	return ret;
+}
+
+void finalize_fat(void)
+{
+	struct fat_extent fe_free;
+	struct fat_extent fe_bad;
+
+	/*
+	 * The unused space between the directories and the files is
+	 * divided into an unallocated part and a marked-unusable part.
+	 * This is so that we don't report more free space than the
+	 * host filesystem actually has.
+	 */
+
+	fe_free.starting_cluster = g_first_free_cluster;
+	fe_free.ending_cluster = min(last_free_cluster(),
+		g_first_free_cluster + g_max_free_clusters - 1);
+	fe_free.index = FAT_UNALLOCATED;
+	fe_free.offset = 0;
+	fe_free.next = fe_free.index;
+	fe_free.extent_type = EXTENT_LITERAL;
+
+	if (fe_free.ending_cluster >= fe_free.starting_cluster)
+		fat_extents.push_back(fe_free);
+
+	fe_bad.starting_cluster = fe_free.ending_cluster + 1;
+	fe_bad.ending_cluster = last_free_cluster();
+	fe_bad.index = FAT_BAD_CLUSTER;
+	fe_bad.offset = 0;
+	fe_bad.next = fe_bad.index;
+	fe_bad.extent_type = EXTENT_LITERAL;
+
+	if (fe_bad.ending_cluster >= fe_bad.starting_cluster)
+		fat_extents.push_back(fe_bad);
+
+	int pos = fat_extents.size();
+	fat_extents.resize(pos + temp_fat_extents.size());
+	for (int i = (int) temp_fat_extents.size() - 1; i >= 0; i--, pos++)
+		fat_extents[pos] = temp_fat_extents[i];
+
+	temp_fat_extents.clear();
 }
 
 void init_boot_sector(const char *label)
@@ -985,6 +953,7 @@ void vfat_init(const char *target_dir, uint64_t free_space, const char *label)
 	dot_dot_name.push_back(0);
 
 	scan_target_dir();
+	finalize_fat();
 }
 
 /* TODO: do something about the hidden coupling between this function
