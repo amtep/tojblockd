@@ -298,15 +298,14 @@ int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 		}
 
 		/* otherwise, allocate a new extent */
-		memset(&new_extent, 0, sizeof(new_extent));
 		new_extent.starting_cluster =
 			alloc_dir_clusters(clusters_added);
 		new_extent.ending_cluster = new_extent.starting_cluster
 			+ clusters_added - 1;
 		new_extent.index = e->index;
 		new_extent.offset = dir->allocated * CLUSTER_SIZE;
-		new_extent.extent_type = EXTENT_DIR;
 		new_extent.next = FAT_END_OF_CHAIN;
+		new_extent.extent_type = EXTENT_DIR;
                 last_e->next = new_extent.starting_cluster;
 		fat_extents.push_back(new_extent);
 
@@ -499,7 +498,6 @@ uint32_t alloc_new_dir(const char *path)
 	struct dir_info new_dir;
 	struct fat_extent new_extent;
 
-	memset(&new_dir, 0, sizeof(new_dir));
 	new_dir.starting_cluster = alloc_dir_clusters(1);
 	new_dir.last_extent = fat_extents.size(); // will be allocated below
 	new_dir.allocated = 1;
@@ -507,10 +505,10 @@ uint32_t alloc_new_dir(const char *path)
 
 	dir_infos.push_back(new_dir);
 
-	memset(&new_extent, 0, sizeof(new_extent));
 	new_extent.starting_cluster = new_dir.starting_cluster;
 	new_extent.ending_cluster = new_dir.starting_cluster;
 	new_extent.index = dir_infos.size() - 1;
+	new_extent.offset = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = EXTENT_DIR;
 
@@ -525,7 +523,6 @@ uint32_t map_file(const char *name, uint32_t size)
 	struct filemap_info fm;
 	struct fat_extent new_extent;
 
-	memset(&new_extent, 0, sizeof(new_extent));
 	new_extent.ending_cluster = last_free_cluster();
 	new_extent.starting_cluster = new_extent.ending_cluster - nr_clust + 1;
 	new_extent.index = filemaps.size();
