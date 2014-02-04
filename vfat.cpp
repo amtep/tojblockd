@@ -292,6 +292,7 @@ int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 		if (dir->last_extent == fat_extents.size() - 1) {
 			/* yay, shortcut: just extend this extent */
 			last_e->ending_cluster += clusters_added;
+			g_first_free_cluster += clusters_added;
 			dir->allocated += clusters_added;
 			return 0;
 		}
@@ -310,7 +311,7 @@ int extend_dir(uint32_t clust_nr, uint32_t extra_size)
 		fat_extents.push_back(new_extent);
 
 		dir->last_extent = fat_extents.size() - 1;
-		dir->allocated = clusters_added;
+		dir->allocated += clusters_added;
 	}
 
 	return 0;
@@ -616,14 +617,14 @@ int extent_fill(char *buf, uint32_t len, uint32_t clust_nr, uint32_t offset,
 			break;
 		case EXTENT_DIR: {
 			std::vector<char> *datap = &dir_infos[fe->index].data;
+			uint32_t extra = 0;
 			if (src_offset + len > datap->size()) {
-				uint32_t extra = src_offset + len - datap->size();
+				extra = src_offset + len - datap->size();
 				if (extra > len)
 					extra = len;
-				memcpy(buf, &datap->front() + src_offset,
-					len - extra);
-				memset(buf + len - extra, 0, extra);
 			}
+			memcpy(buf, &datap->front() + src_offset, len - extra);
+			memset(buf + len - extra, 0, extra);
 			break;
 		}
 		case EXTENT_FILEMAP: {
