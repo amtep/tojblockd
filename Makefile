@@ -1,7 +1,7 @@
 all: tojblockd
 
 DBG=-g
-CXXFLAGS=-W -Wall -O2 $(DBG)
+CXXFLAGS=-W -Wall -O0 $(DBG)
 CFLAGS=-W -Wall -O2 $(DBG)
 
 tojblockd.o: vfat.h nbd.h fat.h
