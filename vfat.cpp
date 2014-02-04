@@ -243,6 +243,7 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 			/* past end of image */
 			ret = EINVAL;
 		}
+		fprintf(stderr, "FILL: %llx %x (%x)\n", from, len, maxcopy);
 		len -= maxcopy;
 		buf = (char *) buf + maxcopy;
 		from += maxcopy;
