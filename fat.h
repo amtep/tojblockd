@@ -35,7 +35,6 @@
  */
 
 #define RESERVED_FAT_ENTRIES 2
-#define ROOT_DIR_CLUSTER 2
 
 /* These special values are predefined by the FAT specification */
 #define FAT_END_OF_CHAIN 0x0fffffff
