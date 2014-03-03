@@ -25,10 +25,6 @@
 #define DIR_ENTRY_SIZE 32
 #define CHARS_PER_DIR_ENTRY 13
 
-// These are initialized by dir_init
-static filename_t dot_name;  // contains "."
-static filename_t dot_dot_name;  // contains ".."
-
 /*
  * Information about allocated directories.
  * Directories are allocated from the start of the FAT, but to make
