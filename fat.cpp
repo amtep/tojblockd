@@ -45,11 +45,11 @@ enum {
 
 /* entry 0 contains the media descriptor in its low byte,
  * should be the same as in the boot sector. */
-const struct fat_extent entry_0 = {
+static const struct fat_extent entry_0 = {
 	0, 0, 0x0ffffff8, 0, 0, EXTENT_LITERAL
 };
 /* entry 1 contains the end-of-chain marker */
-const struct fat_extent entry_1 = {
+static const struct fat_extent entry_1 = {
 	1, 1, FAT_END_OF_CHAIN, 0, 0, EXTENT_LITERAL
 };
 

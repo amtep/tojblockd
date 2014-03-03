@@ -38,7 +38,7 @@ struct dir_info {
 	const char *path;  /* path down from g_top_dir */
 };
 
-std::vector<struct dir_info> dir_infos;
+static std::vector<struct dir_info> dir_infos;
 
 static void fill_filename_part(char *data, int seq_nr, bool is_last,
 	const filename_t &filename, uint8_t checksum)

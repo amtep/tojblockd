@@ -63,7 +63,7 @@ static struct option options[] = {
 	{ 0, 0, 0, 0 }
 };
 
-void usage(FILE *out)
+static void usage(FILE *out)
 {
 	fprintf(out, "Usage: %s [options] DIRECTORY\n"
 		"or: %s --help\n"
@@ -125,14 +125,14 @@ void fatal(const char *fmt, ...)
 	exit(1);
 }
 
-void set_read_only(int dev_fd)
+static void set_read_only(int dev_fd)
 {
 	int read_only = 1;
 	if (ioctl(dev_fd, BLKROSET, &read_only) < 0)
 		warning("could not set read-only mode\n");
 }
 
-void set_block_size(int dev_fd, unsigned long size)
+static void set_block_size(int dev_fd, unsigned long size)
 {
 	/*
 	 * Failure to set the block size is fatal because there's
@@ -143,7 +143,7 @@ void set_block_size(int dev_fd, unsigned long size)
 		fatal("could not set block size to %lu\n", size);
 }
 
-uint64_t set_image_size(int dev_fd, uint64_t size, int block_size)
+static uint64_t set_image_size(int dev_fd, uint64_t size, int block_size)
 {
 	uint32_t blocks;
 	if (size > (uint64_t) block_size * 0xFFFFFFFF)
@@ -162,14 +162,14 @@ uint64_t set_image_size(int dev_fd, uint64_t size, int block_size)
 	return blocks * block_size;
 }
 
-void use_socket(int dev_fd, int sock_fd)
+static void use_socket(int dev_fd, int sock_fd)
 {
 	if (ioctl(dev_fd, NBD_SET_SOCK, sock_fd) < 0)
 		fatal("could not associate socket with device: %s",
 			strerror(errno));
 }
 
-void read_buf(int sock_fd, void *buf, size_t size)
+static void read_buf(int sock_fd, void *buf, size_t size)
 {
 	size_t total = 0;
 	ssize_t nread;
@@ -184,7 +184,7 @@ void read_buf(int sock_fd, void *buf, size_t size)
 	} while (size > total);
 }
 
-void write_buf(int sock_fd, void *buf, size_t size)
+static void write_buf(int sock_fd, void *buf, size_t size)
 {
 	size_t total = 0;
 	ssize_t nsent;
@@ -199,7 +199,7 @@ void write_buf(int sock_fd, void *buf, size_t size)
 	} while (size > total);
 }
 
-void send_reply(int sock_fd, const char *handle, int error)
+static void send_reply(int sock_fd, const char *handle, int error)
 {
 	struct nbd_reply reply;
 
@@ -209,7 +209,7 @@ void send_reply(int sock_fd, const char *handle, int error)
 	write_buf(sock_fd, &reply, sizeof(reply));
 }
 
-void serve(int sock_fd)
+static void serve(int sock_fd)
 {
 	struct nbd_request req;
 	void *buf;
@@ -250,7 +250,7 @@ void serve(int sock_fd)
 	}
 }
 
-void parse_opts(int argc, char **argv)
+static void parse_opts(int argc, char **argv)
 {
 	int c;
 
@@ -266,7 +266,7 @@ void parse_opts(int argc, char **argv)
 	}
 }
 
-void daemonize(void)
+static void daemonize(void)
 {
 	pid_t pid;
 

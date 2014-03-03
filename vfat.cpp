@@ -101,7 +101,7 @@ static uint32_t g_data_clusters;
 static uint32_t g_total_sectors;
 
 /* All multibyte values in here are stored in little-endian format */
-uint8_t boot_sector[SECTOR_SIZE] = {
+static uint8_t boot_sector[SECTOR_SIZE] = {
 	0xeb, 0xfe, 0x90,  /* x86 asm, infinite loop */
 	'T', 'O', 'J', 'B', 'L', 'O', 'C', 'K', /* system id */
 	/* 0x00B, start of bios parameter block */
@@ -136,7 +136,7 @@ uint8_t boot_sector[SECTOR_SIZE] = {
 	0, /* the rest is zero filled */
 };
 	
-uint8_t fsinfo_sector[SECTOR_SIZE];
+static uint8_t fsinfo_sector[SECTOR_SIZE];
 
 // These are initialized by vfat_init
 static filename_t dot_name;  // contains "."
@@ -151,9 +151,9 @@ struct filemap_info {
 };
 
 /* filemaps are kept sorted by descending starting_cluster */
-std::vector<struct filemap_info> filemaps;
+static std::vector<struct filemap_info> filemaps;
 
-uint32_t map_file(const char *name, uint32_t size)
+static uint32_t map_file(const char *name, uint32_t size)
 {
 	uint32_t nr_clust = ALIGN(size, CLUSTER_SIZE) / CLUSTER_SIZE;
 	struct filemap_info fm;
@@ -253,7 +253,7 @@ int vfat_fill(void *buf, uint64_t from, uint32_t len)
 	return ret;
 }
 
-void init_boot_sector(const char *label)
+static void init_boot_sector(const char *label)
 {
 	uint32_t volume_id = time(NULL);
 
@@ -279,7 +279,7 @@ void init_boot_sector(const char *label)
 	}
 }
 
-void init_fsinfo_sector(void)
+static void init_fsinfo_sector(void)
 {
 	/* Nothing really useful here, but it's expected to be present */
 	memcpy(&fsinfo_sector[0], "RRaA", 4);  /* magic */
@@ -395,7 +395,7 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 	}
 }
 
-void scan_target_dir(void)
+static void scan_target_dir(void)
 {
 	FTS *ftsp;
 	FTSENT *entp;
