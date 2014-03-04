@@ -247,7 +247,7 @@ static void serve(int sock_fd)
 				}
 			}
 			free(buf);
-			send_reply(sock_fd, req.handle, EROFS);
+			send_reply(sock_fd, req.handle, 0);
 			break;
 		default:
 			info("COMMAND %u\n", req.type);
