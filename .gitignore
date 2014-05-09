@@ -1,2 +1,6 @@
 *.o
 tojblockd
+tests/Makefile
+tests/*/Makefile
+tests/*/test-*
+*.moc

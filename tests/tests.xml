@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testdefinition version="1.0">
+    <suite name="tojblockd-tests" domain="middleware">
+        <description>Automatic tests for tojblockd vfat simulator</description>
+        <set name="unit tests" feature="tojblockd">
+            <description>Tests for individual code modules</description>
+            <case name="fat.cpp">
+                <step>/opt/tests/tojblockd/test-fat</step>
+            </case>
+        </set>
+    </suite>
+</testdefinition>
