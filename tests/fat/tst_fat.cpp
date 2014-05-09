@@ -19,21 +19,52 @@
 
 #include <QtTest/QtTest>
 
+// Mock helper
+struct fill_struct {
+    int type;
+    uint32_t len;
+    int index;
+    uint32_t offset;
+};
+
+enum {
+    MOCK_FILEMAP_FILL,
+    MOCK_DIR_FILL,
+};
+
 // Mock function
-int filemap_fill(char *buf, uint32_t len, int fmap_index, uint32_t)
+int filemap_fill(char *buf, uint32_t len, int fmap_index, uint32_t offset)
 {
     memset(buf, (char) fmap_index, len);
+
+    struct fill_struct *f = (struct fill_struct *) buf;
+    if (len >= sizeof(fill_struct)) {
+        f->type = MOCK_FILEMAP_FILL;
+        f->len = len;
+        f->index = fmap_index;
+        f->offset = offset;
+    }
+
     return 0;
 }
 
 // Mock function
-int dir_fill(char *buf, uint32_t len, int dir_index, uint32_t)
+int dir_fill(char *buf, uint32_t len, int dir_index, uint32_t offset)
 {
     memset(buf, (char) dir_index, len);
+
+    struct fill_struct *f = (struct fill_struct *) buf;
+    if (len >= sizeof(fill_struct)) {
+        f->type = MOCK_DIR_FILL;
+        f->len = len;
+        f->index = dir_index;
+        f->offset = offset;
+    }
+
     return 0;
 }
 
-// Helper macros. These have ot be macros because QCOMPARE can only be
+// Helper macros. These have to be macros because QCOMPARE can only be
 // used from the test function itself.
 
 // Call fat_fill with overflow protection. Declares buf on the stack.
@@ -53,6 +84,16 @@ int dir_fill(char *buf, uint32_t len, int dir_index, uint32_t)
       QCOMPARE(buf[len], 'X'); \
       QCOMPARE(_ret, 0); \
     }
+
+#define check_fill(buf, _type, _len, _index, _offset) \
+    do { \
+        struct fill_struct *_f = (struct fill_struct *) (buf); \
+        QCOMPARE(_f->type, (int) (_type)); \
+        QCOMPARE(_f->len, (uint32_t) (_len)); \
+        QCOMPARE(_f->index, (int) (_index)); \
+        QCOMPARE(_f->offset, (uint32_t) (_offset)); \
+        QCOMPARE((buf)[(_len) - 1], (char) (_index)); \
+    } while (0)
 
 class TestFat : public QObject {
     Q_OBJECT
@@ -143,8 +184,7 @@ private slots:
         // Check that the whole directory cluster was filled
         QVERIFY2(filled >= 4096, QTest::toString(filled));
         // Check that dir_fill did the filling
-        for (uint32_t i = 0; i < 4096; i++)
-            QCOMPARE((int) data[i], test_dir_index);
+        check_fill(data, MOCK_DIR_FILL, 4096, test_dir_index, 0);
         // and any extra fill is from an empty cluster
         // (current code does not fill more than the dir but it's allowed to)
         for (uint32_t i = 4096; i < filled; i++)
@@ -180,8 +220,7 @@ private slots:
         uint32_t filled;
         call_data_fill(data, 4096, expected_entry + 3, 0, &filled);
         QCOMPARE(filled, (uint32_t) 4096);
-        for (uint32_t i = 0; i < 4096; i++)
-            QCOMPARE((int) data[i], test_filemap);
+        check_fill(data, MOCK_FILEMAP_FILL, 4096, test_filemap, 3 * 4096);
     }
 
     // Try allocating two filemaps and try a data_fill that
@@ -200,15 +239,17 @@ private slots:
 
         uint32_t filled;
         call_data_fill(data, 4096, clust_nr1 - 1, 512, &filled);
+        const uint32_t expected_end = 4096 - 512;
+        const uint32_t expected_offset = (test_clusters - 1) * 4096 + 512;
         // data_fill is allowed to go past the end of the cluster,
         // but doesn't have to.
-        QVERIFY(filled >= (4096 - 512));
+        QVERIFY(filled >= expected_end);
         QVERIFY(filled <= 4096);
-        for (uint32_t i = 0; i < 4096 - 512; i++) {
-            QCOMPARE((int) data[i], test_filemap2);
-        }
-        for (uint32_t i = 4096 - 512; i < filled; i++) {
-            QCOMPARE((int) data[i], test_filemap1);
+        check_fill(data, MOCK_FILEMAP_FILL, expected_end, test_filemap2,
+                expected_offset);
+        if (filled > expected_end) {
+            check_fill(&data[expected_end], MOCK_FILEMAP_FILL,
+                    filled - expected_end, test_filemap1, 0);
         }
     }
 
