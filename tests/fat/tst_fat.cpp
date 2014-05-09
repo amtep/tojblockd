@@ -47,6 +47,32 @@ private slots:
         // No dirs should be found
         QCOMPARE(fat_dir_index(0), -1);
         QCOMPARE(fat_dir_index(1000), -1);
+
+	fat_finalize(DATA_CLUSTERS); // required by API
+
+	uint32_t buf[1024 + 1];
+	buf[1024] = 0x31337; // buffer overflow guard value
+	fat_fill(buf, 0, 1024);
+	QCOMPARE(buf[1024], (uint32_t) 0x31337);
+	// Check the special first two fat entries
+	QCOMPARE(buf[0], (uint32_t) 0x0ffffff8); // media byte marker
+	QCOMPARE(buf[1], (uint32_t) 0x0fffffff); // end of chain marker
+	// everything else should be 0
+	for (int i = 2; i < 1024; i++) {
+		QCOMPARE(buf[i], (uint32_t) 0);
+	}
+
+	char data[4096 + 1];
+	data[4096] = 'X'; // buffer overflow guard
+	uint32_t filled;
+	int ret = data_fill(data, 4096, 0, 0, &filled);
+	QCOMPARE(data[4096], 'X');
+	QCOMPARE(ret, 0);
+	QCOMPARE(filled, (uint32_t) 4096);
+	// everything should be 0
+	for (int i = 0; i < 4096; i++) {
+		QCOMPARE(data[i], (char) 0);
+	}
     }
 
 };
