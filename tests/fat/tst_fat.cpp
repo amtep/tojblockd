@@ -17,6 +17,8 @@
 #include "vfat.h"  // for filemap_fill
 #include "dir.h" // for dir_fill
 
+#include <errno.h>
+
 #include <QtTest/QtTest>
 
 // Mock helper
@@ -191,6 +193,134 @@ private slots:
             QCOMPARE((int) data[i], 0);
     }
 
+    // Try allocating two directories and then extending the first
+    void test_extend_dir() {
+        const int test_dir_index1 = 4;
+        const int test_dir_index2 = 9;
+
+        uint32_t clust_nr1 = fat_alloc_dir(test_dir_index1);
+        uint32_t clust_nr2 = fat_alloc_dir(test_dir_index2);
+
+        QCOMPARE(clust_nr1, (uint32_t) 2);
+        QCOMPARE(clust_nr2, (uint32_t) 3);
+
+        QCOMPARE(fat_dir_index(0), -1);
+        QCOMPARE(fat_dir_index(1), -1);
+        QCOMPARE(fat_dir_index(2), test_dir_index1);
+        QCOMPARE(fat_dir_index(3), test_dir_index2);
+        QCOMPARE(fat_dir_index(4), -1);
+        QCOMPARE(fat_dir_index(5), -1);
+
+        bool ret = fat_extend(clust_nr1, 1);
+        QCOMPARE(ret, true);
+
+        QCOMPARE(fat_dir_index(0), -1);
+        QCOMPARE(fat_dir_index(1), -1);
+        QCOMPARE(fat_dir_index(2), test_dir_index1);
+        QCOMPARE(fat_dir_index(3), test_dir_index2);
+        QCOMPARE(fat_dir_index(4), test_dir_index1);
+        QCOMPARE(fat_dir_index(5), -1);
+
+        fat_finalize(DATA_CLUSTERS);
+
+        QCOMPARE(fat_dir_index(0), -1);
+        QCOMPARE(fat_dir_index(1), -1);
+        QCOMPARE(fat_dir_index(2), test_dir_index1);
+        QCOMPARE(fat_dir_index(3), test_dir_index2);
+        QCOMPARE(fat_dir_index(4), test_dir_index1);
+        QCOMPARE(fat_dir_index(5), -1);
+
+        // Check the first fat page
+        call_fat_fill(buf, 0, 1024);
+        QCOMPARE(buf[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(buf[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(buf[2], (uint32_t) 4); // next cluster of dir 1
+        QCOMPARE(buf[3], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(buf[4], (uint32_t) 0x0fffffff); // end of chain marker
+        // Everything else should be 0
+        for (uint32_t i = 5; i < 1024; i++)
+            QCOMPARE(buf[i], (uint32_t) 0);
+
+        // Check that data_fill gets it right
+        uint32_t filled;
+        call_data_fill(data1, 4096, 2, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data1, MOCK_DIR_FILL, 4096, test_dir_index1, 0);
+
+        call_data_fill(data2, 4096, 3, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data2, MOCK_DIR_FILL, 4096, test_dir_index2, 0);
+
+        call_data_fill(data3, 4096, 4, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data3, MOCK_DIR_FILL, 4096, test_dir_index1, 4096);
+    }
+
+    // Try allocating two directories and then extending the first twice
+    void test_extend_dir_twice() {
+        const int test_dir_index1 = 7;
+        const int test_dir_index2 = 11;
+
+        uint32_t clust_nr1 = fat_alloc_dir(test_dir_index1);
+        uint32_t clust_nr2 = fat_alloc_dir(test_dir_index2);
+
+        QCOMPARE(clust_nr1, (uint32_t) 2);
+        QCOMPARE(clust_nr2, (uint32_t) 3);
+
+        bool ret1 = fat_extend(clust_nr1, 1);
+        QCOMPARE(ret1, true);
+        bool ret2 = fat_extend(clust_nr1, 1);
+        QCOMPARE(ret2, true);
+
+        QCOMPARE(fat_dir_index(0), -1);
+        QCOMPARE(fat_dir_index(1), -1);
+        QCOMPARE(fat_dir_index(2), test_dir_index1);
+        QCOMPARE(fat_dir_index(3), test_dir_index2);
+        QCOMPARE(fat_dir_index(4), test_dir_index1);
+        QCOMPARE(fat_dir_index(5), test_dir_index1);
+        QCOMPARE(fat_dir_index(6), -1);
+
+        fat_finalize(DATA_CLUSTERS);
+
+        QCOMPARE(fat_dir_index(0), -1);
+        QCOMPARE(fat_dir_index(1), -1);
+        QCOMPARE(fat_dir_index(2), test_dir_index1);
+        QCOMPARE(fat_dir_index(3), test_dir_index2);
+        QCOMPARE(fat_dir_index(4), test_dir_index1);
+        QCOMPARE(fat_dir_index(5), test_dir_index1);
+        QCOMPARE(fat_dir_index(6), -1);
+
+        // Check the first fat page
+        call_fat_fill(buf, 0, 1024);
+        QCOMPARE(buf[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(buf[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(buf[2], (uint32_t) 4); // next cluster of dir 1
+        QCOMPARE(buf[3], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(buf[4], (uint32_t) 5); // next cluster of dir 1
+        QCOMPARE(buf[5], (uint32_t) 0x0fffffff); // end of chain marker
+        // Everything else should be 0
+        for (uint32_t i = 6; i < 1024; i++)
+            QCOMPARE(buf[i], (uint32_t) 0);
+
+        // Check that data_fill gets it right
+        uint32_t filled;
+        call_data_fill(data1, 4096, 2, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data1, MOCK_DIR_FILL, 4096, test_dir_index1, 0);
+
+        call_data_fill(data2, 4096, 3, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data2, MOCK_DIR_FILL, 4096, test_dir_index2, 0);
+
+        call_data_fill(data3, 4096, 4, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data3, MOCK_DIR_FILL, 4096, test_dir_index1, 4096);
+
+        call_data_fill(data4, 4096, 5, 0, &filled);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(data4, MOCK_DIR_FILL, 4096, test_dir_index1, 2 * 4096);
+    }
+
     // Try allocating one filemap and check the result
     void test_one_filemap() {
         const int test_filemap = 8;
@@ -253,6 +383,44 @@ private slots:
         }
     }
 
+    // Create an image with restricted free space
+    void test_unusable_clusters() {
+        fat_alloc_dir(1);
+        fat_alloc_dir(2);
+        fat_alloc_filemap(1, 10);
+        fat_alloc_filemap(2, 10);
+        const uint32_t allocated = 22;
+
+        fat_finalize(DATA_CLUSTERS / 2);
+
+        const uint32_t expect_free = DATA_CLUSTERS / 2;
+        const uint32_t expect_bad = DATA_CLUSTERS - allocated - expect_free;
+
+        // Load the whole FAT for analysis
+        call_fat_fill(buf, 0, FAT_ENTRIES);
+        uint32_t free_count = 0;
+        uint32_t bad_count = 0;
+        for (uint32_t i = 0; i < FAT_ENTRIES; i++) {
+            if (buf[i] == 0)
+                free_count++;
+            else if (buf[i] == 0x0ffffff7)
+                bad_count++;
+        }
+        QCOMPARE(free_count, expect_free);
+        QCOMPARE(bad_count, expect_bad);
+    }
+
+    void test_bad_args() {
+        QCOMPARE(fat_extend(0, 1), false);
+        QCOMPARE(fat_extend(FAT_ENTRIES, 1), false);
+
+        fat_finalize(DATA_CLUSTERS);
+
+        char data[4096];
+        uint32_t filled;
+        int ret = data_fill(data, 4096, FAT_ENTRIES, 0, &filled);
+        QCOMPARE(ret, EINVAL);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestFat)
