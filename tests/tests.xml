@@ -7,6 +7,9 @@
             <case name="fat.cpp">
                 <step>/opt/tests/tojblockd/test-fat</step>
             </case>
+            <case name="dir.cpp">
+                <step>/opt/tests/tojblockd/test-dir</step>
+            </case>
         </set>
     </suite>
 </testdefinition>

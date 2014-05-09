@@ -29,12 +29,12 @@ tests/Makefile:
 
 check: tests
 	tests/fat/test-fat
+	tests/dir/test-dir
 
 coverage: check
 	geninfo tests  # creates the .info tracefiles
 	lcov -e tests/fat/fat.*.info $$PWD/fat.cpp -o tests/fat.info
-	rm -f tests/all.info
-	lcov -a tests/*.info -o tests/all.info
+	lcov -e tests/dir/dir.*.info $$PWD/dir.cpp -o tests/dir.info
 
 covhtml: coverage
-	genhtml -o covhtml --demangle-cpp -p $$PWD tests/all.info
+	genhtml -o covhtml --demangle-cpp tests/*.info
