@@ -4,3 +4,8 @@ tests/Makefile
 tests/*/Makefile
 tests/*/test-*
 *.moc
+*.gcda
+*.gcno
+*.gcda.info
+tests/*.info
+covhtml
