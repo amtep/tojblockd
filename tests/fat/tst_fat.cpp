@@ -14,8 +14,24 @@
  */
 
 #include "fat.h"
+#include "vfat.h"  // for filemap_fill
+#include "dir.h" // for dir_fill
 
 #include <QtTest/QtTest>
+
+// Mock function
+int filemap_fill(char *buf, uint32_t len, int, uint32_t)
+{
+    memset(buf, '5', len);
+    return 0;
+}
+
+// Mock function
+int dir_fill(char *buf, uint32_t len, int, uint32_t)
+{
+    memset(buf, 'A', len);
+    return 0;
+}
 
 class TestFat : public QObject {
     Q_OBJECT
