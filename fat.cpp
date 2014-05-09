@@ -21,6 +21,7 @@
 #include <algorithm>
 
 #include "vfat.h"
+#include "dir.h"
 
 /*
  * A fat_extent is a contiguous section of the FAT where the values
