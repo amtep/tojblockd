@@ -16,6 +16,7 @@
 #include "dir.h"
 
 #include <string.h>
+#include <errno.h>
 
 #include <algorithm>
 
@@ -243,6 +244,9 @@ uint32_t dir_alloc_new(const char *path)
 
 int dir_fill(char *buf, uint32_t len, int dir_index, uint32_t offset)
 {
+        if (dir_index < 0 || dir_index >= (int) dir_infos.size())
+            return EINVAL;
+
 	std::vector<char> *datap = &dir_infos[dir_index].data;
 	uint32_t extra = 0;
 	if (offset + len > datap->size()) {
