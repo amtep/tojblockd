@@ -25,8 +25,7 @@
 /*
  * A fat_extent is a contiguous section of the FAT where the values
  * are either all identical (empty, bad sector, etc) or are ascending
- * numbers where each value points to its neighbor, with possibly
- * an end-of-chain marker at the end.
+ * numbers where each value except the last points to its neighbour.
  */
 struct fat_extent {
 	uint32_t starting_cluster;
