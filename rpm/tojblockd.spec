@@ -4,6 +4,7 @@ Version:    1.0
 Release:    1
 Group:      System/Daemons
 License:    GPLv2+
+URL:        https://github.com/amtep/tojblockd
 Source0:    %{name}-%{version}.tar.gz
 Requires:   modules(nbd)
 # Qt5 is only needed for the autotests
