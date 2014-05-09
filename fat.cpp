@@ -71,8 +71,10 @@ static uint32_t g_data_clusters;
 void fat_init(uint32_t data_clusters)
 {
 	g_data_clusters = data_clusters;
+	extents.clear();
 	extents.push_back(entry_0);
 	extents.push_back(entry_1);
+	extents_from_end.clear();
 }
 
 /* This function is only valid during construction stage */
