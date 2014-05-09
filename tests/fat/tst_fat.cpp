@@ -36,8 +36,18 @@ int dir_fill(char *buf, uint32_t len, int, uint32_t)
 class TestFat : public QObject {
     Q_OBJECT
 
-private slots:
+    static const int DATA_CLUSTERS = 1000000;
 
+private slots:
+    void init() {
+        fat_init(DATA_CLUSTERS);
+    }
+
+    void test_empty_fat() {
+        // No dirs should be found
+        QCOMPARE(fat_dir_index(0), -1);
+        QCOMPARE(fat_dir_index(1000), -1);
+    }
 
 };
 
