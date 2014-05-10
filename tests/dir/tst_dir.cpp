@@ -21,6 +21,8 @@
 
 #include <QtTest/QtTest>
 
+#include "../helpers.h"
+
 // stub for linking with fat.cpp
 int filemap_fill(char *, uint32_t, int, uint32_t) {
     return EINVAL;
@@ -38,7 +40,6 @@ int filemap_fill(char *, uint32_t, int, uint32_t) {
       QCOMPARE(_ret, 0); \
     }
 
-
 class TestDir : public QObject {
     Q_OBJECT
 
@@ -52,8 +53,7 @@ private slots:
 
     void test_empty_root() {
         call_dir_fill(buf, 4096, 0, 0);
-        for (int i = 0; i < 4096; i++)
-            QCOMPARE(buf[i], (char) 0);
+        VERIFY_ARRAY(buf, 0, 4096, (char) 0); // root is still empty
         // any other index should fail
         QVERIFY(dir_fill(buf, 4096, 1, 0) != 0);
     }
@@ -62,8 +62,7 @@ private slots:
     void test_partial_fill() {
         // The call_dir_fill macro will check that it didn't go out of bounds
         call_dir_fill(buf, 2000, 0, 1000);
-        for (int i = 0; i < 2000; i++)
-            QCOMPARE(buf[i], (char) 0);
+        VERIFY_ARRAY(buf, 0, 2000, (char) 0); 
     }
 };
 

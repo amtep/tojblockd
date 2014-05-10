@@ -21,6 +21,8 @@
 
 #include <QtTest/QtTest>
 
+#include "../helpers.h"
+
 // Mock helper
 struct fill_struct {
     int type;
@@ -119,16 +121,12 @@ private slots:
         // Check the special first two fat entries
         QCOMPARE(buf[0], (uint32_t) 0x0ffffff8); // media byte marker
         QCOMPARE(buf[1], (uint32_t) 0x0fffffff); // end of chain marker
-        // everything else should be 0
-        for (uint32_t i = 2; i < 1024; i++)
-            QCOMPARE(buf[i], (uint32_t) 0);
+        VERIFY_ARRAY(buf, 2, 1024, (uint32_t) 0);
 
         uint32_t filled;
         call_data_fill(data, 4096, 2, 0, &filled);
         QCOMPARE(filled, (uint32_t) 4096);
-        // everything should be 0
-        for (uint32_t i = 0; i < 4096; i++)
-            QCOMPARE(data[i], (char) 0);
+        VERIFY_ARRAY(data, 0, 4096, (char) 0);
     }
 
     // Check that the last page of the fat is correct
@@ -140,13 +138,9 @@ private slots:
         call_fat_fill(buf, last_page_start, 1024);
         // All valid fat entries should still be 0, and the rest should
         // contain bad cluster markers.
-        for (uint32_t i = last_page_start; i < FAT_ENTRIES; i++) {
-            QCOMPARE(buf[i - last_page_start], (uint32_t) 0);
-        }
-        for (uint32_t i = FAT_ENTRIES; i < last_page_start + 1024; i++) {
-            // Bad cluster marker
-            QCOMPARE(buf[i - last_page_start], (uint32_t) 0x0ffffff7);
-        }
+        const int boundary = FAT_ENTRIES - last_page_start;
+        VERIFY_ARRAY(buf, 0, boundary, (uint32_t) 0);
+        VERIFY_ARRAY(buf, boundary, 1024, (uint32_t) 0x0ffffff7);
     }
 
     // Try allocating one directory and check the result
@@ -176,9 +170,7 @@ private slots:
         QCOMPARE(buf[1], (uint32_t) 0x0fffffff); // end of chain marker
         // Check the new directory entry
         QCOMPARE(buf[2], (uint32_t) 0x0fffffff); // end of chain marker
-        // Everything else should be 0
-        for (uint32_t i = 3; i < 1024; i++)
-            QCOMPARE(buf[i], (uint32_t) 0);
+        VERIFY_ARRAY(buf, 3, 1024, (uint32_t) 0); // everything else 0
 
         // Check that data_fill accesses the directory
         uint32_t filled;
@@ -189,8 +181,7 @@ private slots:
         check_fill(data, MOCK_DIR_FILL, 4096, test_dir_index, 0);
         // and any extra fill is from an empty cluster
         // (current code does not fill more than the dir but it's allowed to)
-        for (uint32_t i = 4096; i < filled; i++)
-            QCOMPARE((int) data[i], 0);
+        VERIFY_ARRAY(data, 4096, (int) filled, (char) 0);
     }
 
     // Try allocating two directories and then extending the first
@@ -237,9 +228,7 @@ private slots:
         QCOMPARE(buf[2], (uint32_t) 4); // next cluster of dir 1
         QCOMPARE(buf[3], (uint32_t) 0x0fffffff); // end of chain marker
         QCOMPARE(buf[4], (uint32_t) 0x0fffffff); // end of chain marker
-        // Everything else should be 0
-        for (uint32_t i = 5; i < 1024; i++)
-            QCOMPARE(buf[i], (uint32_t) 0);
+        VERIFY_ARRAY(buf, 5, 1024, (uint32_t) 0); // everything else 0
 
         // Check that data_fill gets it right
         uint32_t filled;
@@ -298,9 +287,7 @@ private slots:
         QCOMPARE(buf[3], (uint32_t) 0x0fffffff); // end of chain marker
         QCOMPARE(buf[4], (uint32_t) 5); // next cluster of dir 1
         QCOMPARE(buf[5], (uint32_t) 0x0fffffff); // end of chain marker
-        // Everything else should be 0
-        for (uint32_t i = 6; i < 1024; i++)
-            QCOMPARE(buf[i], (uint32_t) 0);
+        VERIFY_ARRAY(buf, 6, 1024, (uint32_t) 0); // everything else 0
 
         // Check that data_fill gets it right
         uint32_t filled;
