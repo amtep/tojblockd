@@ -41,6 +41,8 @@ struct dir_info {
 
 static std::vector<struct dir_info> dir_infos;
 
+static uint32_t unique_name_counter = 1;
+
 static void fill_filename_part(char *data, int seq_nr, bool is_last,
 	const filename_t &filename, uint8_t checksum)
 {
@@ -93,8 +95,7 @@ static uint8_t calc_vfat_checksum(uint8_t *entry)
  */
 static void prep_short_entry(uint8_t *entry)  /* at least 11-byte buffer */
 {
-	static uint32_t counter = 1;
-	uint32_t uniq = counter++;
+	uint32_t uniq = unique_name_counter++;
 	int i;
 
 	/* The first 11 bytes are the shortname buffer.
@@ -145,6 +146,8 @@ static void encode_date(uint8_t *buf, time_t stamp)  /* 2-byte buffer */
 
 void dir_init()
 {
+	unique_name_counter = 1;
+	dir_infos.clear();
 	dir_alloc_new("."); /* create empty root directory */
 }
 
