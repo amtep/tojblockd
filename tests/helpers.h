@@ -32,3 +32,34 @@
             } \
         } \
     } while (0);
+
+#define COMPARE_ARRAY(actual, expected, limit) \
+    do { \
+        for (int _i = 0; _i < (limit); ++_i) { \
+            if (!((actual)[_i] == (expected)[_i])) { \
+                char *_actualstr = 0; \
+                char *_expectedstr = 0; \
+                asprintf(&_actualstr, "%s[%d]", #actual, _i); \
+                asprintf(&_expectedstr, "%s[%d]", #expected, _i); \
+                if (!QTest::qCompare((actual)[_i], (expected)[_i], \
+                        _actualstr, _expectedstr, __FILE__, __LINE__)) { \
+                    free(_actualstr); \
+                    free(_expectedstr); \
+                    return; \
+                } \
+                free(_actualstr); \
+                free(_expectedstr); \
+            } \
+        } \
+    } while (0);
+
+namespace QTest {
+template<> inline char *toString(const unsigned char &c) {
+    char *str;
+    if (c >= 32 && c < 127)
+        asprintf(&str, "'%c' (%d)", c, (int) c);
+    else
+        asprintf(&str, "%d", (int) c);
+    return str;
+}
+}
