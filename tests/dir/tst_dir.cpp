@@ -52,17 +52,19 @@ static filename_t expand_name(const char *name) {
     return fname;
 }
 
-static const unsigned char dir_entry_expect[] = {
-    // long name, encoded in one entry
-    0x41, // sequence number + start indicator
-    't', 0, 'e', 0, 's', 0, 't', 0, 'n', 0,
-    0x0f, // attributes for LFN entry
-    0,
-    212, // checksum of short name below
-    'a', 0, 'm', 0, 'e', 0, '.', 0, 't', 0, 's', 0,
-    0, 0,
-    't', 0, 0, 0,
+// These values are the ones used to construct the
+// expected short entry below
+static const uint32_t test_clust = 0x20042448;
+static const uint32_t test_file_size = 0x10031337;
+static const uint32_t test_mtime = 0x536b4b33;
+static const uint32_t test_atime = 0x536e589b;
 
+// dir.cpp generates its short entries in a predictable
+// pattern, so the expected checksums can be precalculated.
+static const unsigned char short_1_checksum = 212;
+static const unsigned char short_2_checksum = 213;
+
+static const unsigned char short_entry_expect[32] = {
     // invalidated short name
     ' ', 0, 1, 0, 0, 0, 0, 0, '/', 0, 0,
     0x01, // read only
@@ -75,7 +77,65 @@ static const unsigned char dir_entry_expect[] = {
     0xef, 0x41, // mtime: 08:15:30
     0xa8, 0x44, // mtime: May 8 2014
     0x48, 0x24, // two LSB of cluster number
-    0x37, 0x13, 0x03, 0x10, // file size
+    0x37, 0x13, 0x03, 0x10 // file size
+};
+
+static unsigned char dir_entry_expect[32] = {
+    // this is all the same as short_entry_expect except marked fields
+    ' ', 0, 1, 0, 0, 0, 0, 0, '/', 0, 0,
+    0x11, // read only directory
+    0,
+    100,
+    0xef, 0x41,
+    0xa8, 0x44,
+    0xaa, 0x44,
+    0, 0, // two MSB of cluster number, caller must fill
+    0xef, 0x41,
+    0xa8, 0x44,
+    0, 0, // two LSB of cluster number, caller must fill
+    0, 0, 0, 0 // file size
+};
+
+static unsigned char short_entry_2_expect[32] = {
+    // this is all the same as short_entry_expect except marked fields
+    ' ', 0, 2, 0, 0, 0, 0, 0, '/', 0, 0,  // short name counter 2
+    0x01,
+    0,
+    100,
+    0xef, 0x41,
+    0xa8, 0x44,
+    0xaa, 0x44,
+    0x04, 0x20,
+    0xef, 0x41,
+    0xa8, 0x44,
+    0x48, 0x24,
+    0x37, 0x13, 0x03, 0x10
+};
+
+// LFN for "testname.tst"
+static unsigned char lfn_entry_1_expect[32] = {
+    // long name, encoded in one entry
+    0x41, // sequence number + start indicator
+    't', 0, 'e', 0, 's', 0, 't', 0, 'n', 0,
+    0x0f, // attributes for LFN entry
+    0,
+    0, // checksum of expected short entry, caller must fill
+    'a', 0, 'm', 0, 'e', 0, '.', 0, 't', 0, 's', 0,
+    0, 0,
+    't', 0, 0, 0
+};
+
+// LFN for "subdir"
+static unsigned char lfn_entry_2_expect[32] = {
+    // long name, encoded in one entry
+    0x41, // sequence number + start indicator
+    's', 0, 'u', 0, 'b', 0, 'd', 0, 'i', 0,
+    0x0f, // attributes for LFN entry
+    0,
+    0, // checksum of expected short entry, caller must fill
+    'r', 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0, 0,
+    0xff, 0xff, 0xff, 0xff
 };
 
 class TestDir : public QObject {
@@ -106,17 +166,54 @@ private slots:
 
     // Try creating one file in the root directory
     void test_dir_entry() {
-        const uint32_t test_clust = 0x20042448;
-        const uint32_t test_file_size = 0x10031337;
-        const uint32_t test_mtime = 0x536b4b33;
-        const uint32_t test_atime = 0x536e589b;
-
         QVERIFY(dir_add_entry(0, test_clust, expand_name("testname.tst"),
                 test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
         call_dir_fill(buf, 4096, 0, 0);
-        COMPARE_ARRAY((unsigned char *) buf, dir_entry_expect,
-                (int) sizeof(dir_entry_expect));
-        VERIFY_ARRAY(buf, sizeof(dir_entry_expect), 4096, (char) 0);
+        lfn_entry_1_expect[13] = short_1_checksum;
+        COMPARE_ARRAY((unsigned char *) buf, lfn_entry_1_expect, 32);
+        COMPARE_ARRAY((unsigned char *) buf + 32, short_entry_expect, 32);
+        VERIFY_ARRAY(buf, 64, 4096, (char) 0);
+    }
+
+    // Try creating a subdirectory of the root,
+    // and then creating a file entry in the subdirectory.
+    void test_create_subdir() {
+        uint32_t dir_clust = dir_alloc_new("subdir");
+        QVERIFY(dir_add_entry(0, dir_clust, expand_name("subdir"),
+                test_file_size, FAT_ATTR_DIRECTORY | FAT_ATTR_READ_ONLY,
+                test_mtime, test_atime));
+        call_dir_fill(root, 4096, 0, 0);
+        dir_entry_expect[26] = dir_clust;
+        dir_entry_expect[27] = dir_clust >> 8;
+        dir_entry_expect[20] = dir_clust >> 16;
+        dir_entry_expect[21] = dir_clust >> 24;
+        lfn_entry_2_expect[13] = short_1_checksum;
+        COMPARE_ARRAY((unsigned char *) root, lfn_entry_2_expect, 32);
+        COMPARE_ARRAY((unsigned char *) root + 32, dir_entry_expect, 32);
+        VERIFY_ARRAY(root, 64, 4096, (char) 0);
+
+        QVERIFY(dir_add_entry(dir_clust, test_clust,
+                expand_name("testname.tst"), test_file_size,
+                FAT_ATTR_READ_ONLY, test_mtime, test_atime));
+        call_dir_fill(subdir, 4096, 1, 0);
+        lfn_entry_1_expect[13] = short_2_checksum;
+        COMPARE_ARRAY((unsigned char *) subdir, lfn_entry_1_expect, 32);
+        COMPARE_ARRAY((unsigned char *) subdir + 32, short_entry_2_expect, 32);
+        VERIFY_ARRAY(subdir, 64, 4096, (char) 0);
+    }
+
+    // Try creating a directory entry with a name that has to be
+    // split over multiple LFN entries. For good measure, test the
+    // edge case where the final null character needs its own entry.
+    void test_create_long_name() {
+    }
+
+    // Try filling up a directory so that it has to expand to
+    // an extra cluster.
+    void test_large_dir() {
+    }
+
+    void test_bad_input() {
     }
 };
 
