@@ -1,23 +1,25 @@
 all: tojblockd
 
 DBG=-g
-CXXFLAGS=-W -Wall -O2 $(DBG)
-CFLAGS=-W -Wall -O2 $(DBG)
+CXXFLAGS=-W -Wall -O2 $(DBG) -Iimport
+CFLAGS=-W -Wall -O2 $(DBG) -Iimport
 
-tojblockd.o: vfat.h nbd.h sd_notify.h
-vfat.o: vfat.h ConvertUTF.h fat.h dir.h filemap.h
-ConvertUTF.o: ConvertUTF.h
+tojblockd.o: vfat.h import/nbd.h import/sd_notify.h
+vfat.o: vfat.h import/ConvertUTF.h fat.h dir.h filemap.h
 fat.o: fat.h dir.h filemap.h
 dir.o: dir.h vfat.h fat.h
 filemap.o: filemap.h
 
-tojblockd: tojblockd.o vfat.o ConvertUTF.o sd_notify.o fat.o dir.o filemap.o
+import/ConvertUTF.o: import/ConvertUTF.h
+import/sd_notify.o: import/sd_notify.h
+
+tojblockd: tojblockd.o vfat.o import/ConvertUTF.o import/sd_notify.o fat.o dir.o filemap.o
 	$(CXX) $^ -o $@
 
 .PHONY: clean tests check coverage
 
 clean:
-	rm -f tojblockd *.o
+	rm -f tojblockd *.o import/*.o
 	if [ -e tests/Makefile ]; then cd tests && $(MAKE) distclean; fi
 	rm -f tests/*.info tests/*/*.gcda tests/*/*.gcno tests/*/*.info
 	rm -rf covhtml
