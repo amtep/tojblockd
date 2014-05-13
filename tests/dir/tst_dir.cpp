@@ -15,7 +15,7 @@
 
 #include "dir.h"
 #include "fat.h"
-#include "vfat.h" // for filemap_fill
+#include "filemap.h" // for filemap_fill prototype
 
 #include <stdlib.h>
 #include <errno.h>

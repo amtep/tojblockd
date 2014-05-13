@@ -26,19 +26,16 @@
 
 #include <endian.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <time.h>
-#include <unistd.h>
 
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <fts.h>
 
-#include <vector>
 #include "ConvertUTF.h"
 
 #include "fat.h"
 #include "dir.h"
+#include "filemap.h"
 
 #define SECTORS_PER_CLUSTER (CLUSTER_SIZE / SECTOR_SIZE)
 #define RESERVED_SECTORS 32  /* before first FAT */
@@ -141,53 +138,6 @@ static uint8_t fsinfo_sector[SECTOR_SIZE];
 // These are initialized by vfat_init
 static filename_t dot_name;  // contains "."
 static filename_t dot_dot_name;  // contains ".."
-
-/*
- * Information about mapped-in files.
- */
-struct filemap_info {
-	uint32_t starting_cluster;
-	const char *path;  /* path down from g_top_dir */
-};
-
-/* filemaps are kept sorted by descending starting_cluster */
-static std::vector<struct filemap_info> filemaps;
-
-static uint32_t map_file(const char *name, uint32_t size)
-{
-	uint32_t nr_clust = ALIGN(size, CLUSTER_SIZE) / CLUSTER_SIZE;
-	struct filemap_info fm;
-
-	fm.starting_cluster = fat_alloc_filemap(filemaps.size(), nr_clust);
-	fm.path = strdup(name);
-
-	filemaps.push_back(fm);
-	return fm.starting_cluster;
-}
-
-int filemap_fill(char *buf, uint32_t len, int fmap_index, uint32_t offset)
-{
-	const char *path = filemaps[fmap_index].path;
-	int nread;
-	int fd;
-	int ret = 0;
-
-	fd = open(path, O_RDONLY);
-	if (fd < 0)
-		return errno;
-
-	if (lseek(fd, offset, SEEK_SET) == (off_t) -1) {
-		ret = errno;
-	} else {
-		nread = read(fd, buf, len);
-		if (nread < 0)
-			ret = errno;
-		else if ((uint32_t) nread < len) // past end of file
-			memset(buf + nread, 0, len - nread);
-	}
-	close(fd);
-	return ret;
-}
 
 int vfat_fill(void *buf, uint64_t from, uint32_t len)
 {
@@ -375,7 +325,7 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 				break;  /* can't represent name */
 			parent = entp->fts_parent->fts_number;
 			if (size > 0)
-				clust = map_file(entp->fts_path, size);
+				clust = filemap_add(entp->fts_path, size);
 			else
 				clust = 0;
 			dir_add_entry(parent, clust, name, size,
