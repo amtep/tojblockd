@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Jolla Ltd.
+ * Copyright (C) 2013-2014 Jolla Ltd.
  * Contact: Richard Braakman <richard.braakman@jollamobile.com>
  *
  * This program is free software; you can redistribute it and/or
