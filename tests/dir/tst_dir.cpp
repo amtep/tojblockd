@@ -29,18 +29,6 @@ int filemap_fill(char *, uint32_t, int, uint32_t) {
     return EINVAL;
 }
 
-// Helper macros. These have to be macros because QCOMPARE can only be
-// used from the test function itself.
-
-// Call dir_fill with overflow protection. Declares buf on the stack.
-#define call_dir_fill(buf, len, dir_index, offset) \
-    char buf[len + 1]; \
-    buf[len] = 'D'; \
-    { int _ret = dir_fill(buf, len, dir_index, offset); \
-      QCOMPARE(buf[len], 'D'); \
-      QCOMPARE(_ret, 0); \
-    }
-
 static filename_t expand_name(const char *name) {
     int len = strlen(name) + 1; // include the trailing 0
     filename_t fname;
@@ -143,24 +131,34 @@ class TestDir : public QObject {
 
     const static uint32_t DATA_CLUSTERS = 1000000;
 
+    char *page;
+
 private slots:
     void init() {
+        page = (char *) alloc_guarded(4096);
+        setenv("TZ", "UTC+1", true); // ensure consistent results from localtime
+
         fat_init(DATA_CLUSTERS);
         dir_init();
-        setenv("TZ", "UTC+1", true); // ensure consistent results from localtime
+    }
+
+    void cleanup() {
+        free_guarded(page);
     }
 
     void test_empty_root() {
-        call_dir_fill(buf, 4096, 0, 0);
-        VERIFY_ARRAY(buf, 0, 4096, (char) 0); // root is still empty
+        int ret = dir_fill(page, 4096, 0, 0);
+        QCOMPARE(ret, 0);
+        VERIFY_ARRAY(page, 0, 4096, (char) 0); // root is still empty
         // any other index should fail
-        QVERIFY(dir_fill(buf, 4096, 1, 0) != 0);
+        QVERIFY(dir_fill(page, 4096, 1, 0) != 0);
     }
 
     // A directory should not fill more than its requested length
     void test_partial_fill() {
-        // The call_dir_fill macro will check that it didn't go out of bounds
-        call_dir_fill(buf, 2000, 0, 1000);
+        char *buf = (char *) alloc_guarded(2000);
+        int ret = dir_fill(buf, 2000, 0, 1000);
+        QCOMPARE(ret, 0);
         VERIFY_ARRAY(buf, 0, 2000, (char) 0);
     }
 
@@ -168,11 +166,12 @@ private slots:
     void test_dir_entry() {
         QVERIFY(dir_add_entry(0, test_clust, expand_name("testname.tst"),
                 test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-        call_dir_fill(buf, 4096, 0, 0);
+        int ret = dir_fill(page, 4096, 0, 0);
+        QCOMPARE(ret, 0);
         lfn_entry_1_expect[13] = short_1_checksum;
-        COMPARE_ARRAY((unsigned char *) buf, lfn_entry_1_expect, 32);
-        COMPARE_ARRAY((unsigned char *) buf + 32, short_entry_expect, 32);
-        VERIFY_ARRAY(buf, 64, 4096, (char) 0);
+        COMPARE_ARRAY((unsigned char *) page, lfn_entry_1_expect, 32);
+        COMPARE_ARRAY((unsigned char *) page + 32, short_entry_expect, 32);
+        VERIFY_ARRAY(page, 64, 4096, (char) 0);
     }
 
     // Try creating a subdirectory of the root,
@@ -182,24 +181,26 @@ private slots:
         QVERIFY(dir_add_entry(0, dir_clust, expand_name("subdir"),
                 test_file_size, FAT_ATTR_DIRECTORY | FAT_ATTR_READ_ONLY,
                 test_mtime, test_atime));
-        call_dir_fill(root, 4096, 0, 0);
+        int ret = dir_fill(page, 4096, 0, 0);
+        QCOMPARE(ret, 0);
         dir_entry_expect[26] = dir_clust;
         dir_entry_expect[27] = dir_clust >> 8;
         dir_entry_expect[20] = dir_clust >> 16;
         dir_entry_expect[21] = dir_clust >> 24;
         lfn_entry_2_expect[13] = short_1_checksum;
-        COMPARE_ARRAY((unsigned char *) root, lfn_entry_2_expect, 32);
-        COMPARE_ARRAY((unsigned char *) root + 32, dir_entry_expect, 32);
-        VERIFY_ARRAY(root, 64, 4096, (char) 0);
+        COMPARE_ARRAY((unsigned char *) page, lfn_entry_2_expect, 32);
+        COMPARE_ARRAY((unsigned char *) page + 32, dir_entry_expect, 32);
+        VERIFY_ARRAY(page, 64, 4096, (char) 0);
 
         QVERIFY(dir_add_entry(dir_clust, test_clust,
                 expand_name("testname.tst"), test_file_size,
                 FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-        call_dir_fill(subdir, 4096, 1, 0);
+        ret = dir_fill(page, 4096, 1, 0);
+        QCOMPARE(ret, 0);
         lfn_entry_1_expect[13] = short_2_checksum;
-        COMPARE_ARRAY((unsigned char *) subdir, lfn_entry_1_expect, 32);
-        COMPARE_ARRAY((unsigned char *) subdir + 32, short_entry_2_expect, 32);
-        VERIFY_ARRAY(subdir, 64, 4096, (char) 0);
+        COMPARE_ARRAY((unsigned char *) page, lfn_entry_1_expect, 32);
+        COMPARE_ARRAY((unsigned char *) page + 32, short_entry_2_expect, 32);
+        VERIFY_ARRAY(page, 64, 4096, (char) 0);
     }
 
     // Try creating a directory entry with a name that has to be

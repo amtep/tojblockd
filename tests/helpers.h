@@ -54,12 +54,20 @@
     } while (0);
 
 namespace QTest {
-template<> inline char *toString(const unsigned char &c) {
-    char *str;
-    if (c >= 32 && c < 127)
-        asprintf(&str, "'%c' (%d)", c, (int) c);
-    else
-        asprintf(&str, "%d", (int) c);
-    return str;
+template<unsigned char> char *toString(const unsigned char &c);
 }
-}
+
+/*
+ * Allocate a block in such a way that reads or writes that go past
+ * the end of it will result in a segmentation fault.
+ * If the size is a multiple of the page size, then reads or writes
+ * before the start of it will be guarded too.
+ * Since this function has to allocate its block at the end of
+ * a page, it doesn't give the same alignment guarantees as malloc
+ * does. The alignment of the returned pointer will depend on
+ * the alignment of the size.
+ */
+void *alloc_guarded(size_t size);
+
+/* Free a block that was allocated with alloc_guarded */
+void free_guarded(void *p);
