@@ -126,6 +126,39 @@ static unsigned char lfn_entry_2_expect[32] = {
     0xff, 0xff, 0xff, 0xff
 };
 
+// LFN for "abcdefghijklmnopqrstuvwxyz"
+static unsigned char lfn_entry_3_expect[32 * 3] = {
+    // long name, encoded in three entries, last part first
+    0x43, // sequence number + start indicator
+    // the name must have a terminating nul even if it means
+    // allocating another entry for it
+    0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x0f,
+    0,
+    0, // checksum of expected short entry, caller must fill
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0, 0,
+    0xff, 0xff, 0xff, 0xff,
+
+    0x02,
+    'n', 0, 'o', 0, 'p', 0, 'q', 0, 'r', 0,
+    0x0f,
+    0,
+    0, // checksum of expected short entry, caller must fill
+    's', 0, 't', 0, 'u', 0, 'v', 0, 'w', 0, 'x', 0,
+    0, 0,
+    'y', 0, 'z', 0,
+
+    0x01,
+    'a', 0, 'b', 0, 'c', 0, 'd', 0, 'e', 0,
+    0x0f, // attributes for LFN entry
+    0,
+    0, // checksum of expected short entry, caller must fill
+    'f', 0, 'g', 0, 'h', 0, 'i', 0, 'j', 0, 'k', 0,
+    0, 0,
+    'l', 0, 'm', 0
+};
+
 class TestDir : public QObject {
     Q_OBJECT
 
@@ -200,21 +233,50 @@ private slots:
         lfn_entry_1_expect[13] = short_2_checksum;
         COMPARE_ARRAY((unsigned char *) page, lfn_entry_1_expect, 32);
         COMPARE_ARRAY((unsigned char *) page + 32, short_entry_2_expect, 32);
-        VERIFY_ARRAY(page, 64, 4096, (char) 0);
+        VERIFY_ARRAY(page, 2 * 32, 4096, (char) 0);
     }
 
     // Try creating a directory entry with a name that has to be
     // split over multiple LFN entries. For good measure, test the
     // edge case where the final null character needs its own entry.
     void test_create_long_name() {
+        const char *name = "abcdefghijklmnopqrstuvwxyz";
+        QVERIFY(dir_add_entry(0, test_clust, expand_name(name),
+            test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
+        int ret = dir_fill(page, 4096, 0, 0);
+        QCOMPARE(ret, 0);
+        lfn_entry_3_expect[13] = short_1_checksum;
+        lfn_entry_3_expect[13 + 32] = short_1_checksum;
+        lfn_entry_3_expect[13 + 2 * 32] = short_1_checksum;
+        COMPARE_ARRAY((unsigned char *) page, lfn_entry_3_expect, 32 * 3);
+        COMPARE_ARRAY((unsigned char *) page + 3 * 32,
+                short_entry_expect, 32);
+        VERIFY_ARRAY(page, 4 * 32, 4096, (char) 0);
     }
 
     // Try filling up a directory so that it has to expand to
     // an extra cluster.
     void test_large_dir() {
+        QFAIL("stub");
     }
 
     void test_bad_input() {
+        // Add entry to nonexistent dir
+        QVERIFY(dir_add_entry(1, test_clust, expand_name("testname.tst"),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime)
+                == false);
+    }
+
+    void test_overlong_name() {
+        // FAT filesystem spec allows a maximum of 255-character names
+        char name[256];
+        memset(name, 'a', 256);
+        QVERIFY(dir_add_entry(0, test_clust, expand_name(name),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime)
+                == false);
+        name[255] = 0; // shorten it to allowed length, should work now
+        QVERIFY(dir_add_entry(0, test_clust, expand_name(name),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
     }
 };
 
