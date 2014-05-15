@@ -28,7 +28,7 @@
 
 struct filemap_info {
 	uint32_t starting_cluster;
-	const char *path;  /* path down from g_top_dir */
+	const char *path; /* path in real filesystem */
 };
 
 /* filemaps are kept sorted by descending starting_cluster */

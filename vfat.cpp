@@ -345,7 +345,7 @@ static void scan_fts(FTS *ftsp, FTSENT *entp)
 	}
 }
 
-static void scan_target_dir(void)
+static void scan_target_dir(const char *target_dir)
 {
 	FTS *ftsp;
 	FTSENT *entp;
@@ -353,7 +353,7 @@ static void scan_target_dir(void)
 	 * way to get a (const char *) into that array without forcing
 	 * something. fts_open does intend to leave the strings alone,
 	 * so it's safe. */
-	char *path_argv[] = { (char *) g_top_dir, 0 };
+	char *path_argv[] = { (char *) target_dir, 0 };
 
 	/* FTS is a glibc helper for scanning directory trees */
 	ftsp = fts_open(path_argv, FTS_PHYSICAL | FTS_XDEV, NULL);
@@ -366,8 +366,6 @@ static void scan_target_dir(void)
 
 void vfat_init(const char *target_dir, uint64_t free_space, const char *label)
 {
-	g_top_dir = target_dir;
-
 	init_boot_sector(label);
 	init_fsinfo_sector();
 
@@ -383,7 +381,7 @@ void vfat_init(const char *target_dir, uint64_t free_space, const char *label)
 	dot_dot_name.push_back(htole16('.'));
 	dot_dot_name.push_back(0);
 
-	scan_target_dir();
+	scan_target_dir(target_dir);
 	fat_finalize(free_space / CLUSTER_SIZE);
 }
 

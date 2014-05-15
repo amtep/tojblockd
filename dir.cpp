@@ -36,7 +36,7 @@ struct dir_info {
 	uint32_t starting_cluster; /* number of first cluster of this dir */
 	uint32_t allocated; /* number of allocated clusters */
 	std::vector<char> data;
-	const char *path;  /* path down from g_top_dir */
+	const char *path; /* path in real filesystem */
 };
 
 static std::vector<struct dir_info> dir_infos;
