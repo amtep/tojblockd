@@ -34,7 +34,9 @@ check: tests
 	tests/fat/test-fat
 	tests/dir/test-dir
 
-coverage: check
+coverage: tests
+	lcov --zerocounters -d tests
+	-$(MAKE) check
 	geninfo tests  # creates the .info tracefiles
 	lcov -e tests/fat/fat.*.info $$PWD/fat.cpp -o tests/fat.info
 	lcov -e tests/dir/dir.*.info $$PWD/dir.cpp -o tests/dir.info
