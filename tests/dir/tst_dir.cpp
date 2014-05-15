@@ -257,23 +257,61 @@ private slots:
     // Try filling up a directory so that it has to expand to
     // an extra cluster.
     void test_large_dir() {
-        QFAIL("stub");
+        char name[20];
+        int i;
+
+        // fill up the first cluster (but don't go over yet)
+        // each file takes up two 32-byte entries
+        for (i = 0; i < 4096 / (2 * 32); i++) {
+            sprintf(name, "testname%d", i);
+            QVERIFY(dir_add_entry(0, test_clust + i, expand_name(name),
+                    test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
+        }
+	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
+	QCOMPARE(fat_dir_index(3), -1); // still nothing in second data cluster
+
+        // this call should expand the directory in the FAT
+        QVERIFY(dir_add_entry(0, test_clust + i++, expand_name("testname.tst"),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
+	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
+	QCOMPARE(fat_dir_index(3), 0); // and also in second data cluster
+	QCOMPARE(fat_dir_index(4), -1); // but not in third
+
+        // now try it again with the second cluster
+        // (regression test for a bug where it started allocating
+        // a new cluster for every entry)
+        for ( ; i < 2 * 4096 / (2 * 32); i++) {
+            sprintf(name, "testname%d", i);
+            QVERIFY(dir_add_entry(0, test_clust + i, expand_name(name),
+                    test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
+        }
+	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
+	QCOMPARE(fat_dir_index(3), 0); // and also in second data cluster
+	QCOMPARE(fat_dir_index(4), -1); // but not in third
+
+        // this call should expand the directory in the FAT again
+        QVERIFY(dir_add_entry(0, test_clust + i++, expand_name("test2.tst"),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
+	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
+	QCOMPARE(fat_dir_index(3), 0); // and also in second data cluster
+	QCOMPARE(fat_dir_index(4), 0); // and in the third
+	QCOMPARE(fat_dir_index(5), -1); // but not in the fourth
     }
 
     void test_bad_input() {
         // Add entry to nonexistent dir
-        QVERIFY(dir_add_entry(1, test_clust, expand_name("testname.tst"),
-                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime)
-                == false);
+        QCOMPARE(dir_add_entry(1, test_clust, expand_name("testname.tst"),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime),
+                false);
     }
 
     void test_overlong_name() {
         // FAT filesystem spec allows a maximum of 255-character names
         char name[256];
         memset(name, 'a', 256);
-        QVERIFY(dir_add_entry(0, test_clust, expand_name(name),
-                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime)
-                == false);
+        QCOMPARE(dir_add_entry(0, test_clust, expand_name(name),
+                test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime),
+                false);
         name[255] = 0; // shorten it to allowed length, should work now
         QVERIFY(dir_add_entry(0, test_clust, expand_name(name),
                 test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
