@@ -15,6 +15,8 @@
 
 #include <stdio.h>
 
+#include <QtTest/QtTest>
+
 // Helper macros for common operations in test methods.
 
 #define VERIFY_ARRAY(array, start, limit, expected) \
@@ -54,7 +56,7 @@
     } while (0);
 
 namespace QTest {
-template<unsigned char> char *toString(const unsigned char &c);
+template<> char *toString<unsigned char>(const unsigned char &);
 }
 
 /*

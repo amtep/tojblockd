@@ -20,7 +20,7 @@
 #include <sys/mman.h>
 
 namespace QTest {
-template<unsigned char> char *toString(const unsigned char &c) {
+template<> char *toString<unsigned char>(const unsigned char &c) {
     char *str;
     if (c >= 32 && c < 127)
         asprintf(&str, "'%c' (%d)", c, (int) c);
