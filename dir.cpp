@@ -171,6 +171,10 @@ bool dir_add_entry(uint32_t parent_clust, uint32_t entry_clust,
 	if (parent_clust == 0)
 		parent_clust = ROOT_DIR_CLUSTER;
 
+        /* filesystem spec limitation: 255 characters plus terminator */
+        if (filename.size() > 256)
+		return false;
+
 	dir_index = fat_dir_index(parent_clust);
 	if (dir_index < 0)
 		return false;
@@ -181,8 +185,6 @@ bool dir_add_entry(uint32_t parent_clust, uint32_t entry_clust,
 	/* add one entry for the shortname */
 	num_entries = 1 + (filename.size() + CHARS_PER_DIR_ENTRY - 1)
 				/ CHARS_PER_DIR_ENTRY;
-	if (num_entries > 32) /* filesystem spec limitation */
-		return false;
 	clusters_needed = ALIGN(parent->data.size()
 		+ num_entries * DIR_ENTRY_SIZE, CLUSTER_SIZE) / CLUSTER_SIZE;
 	if (clusters_needed > parent->allocated) {
