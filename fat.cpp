@@ -42,6 +42,7 @@ enum {
 	EXTENT_LITERAL = 0, /* "index" is literal value ("next" not used) */
 	EXTENT_DIR = 1, /* index is into dir_infos */
 	EXTENT_FILEMAP = 2, /* index is into filemaps */
+	EXTENT_UNKNOWN = 3, /* unclassified chain written to our image */
 };
 
 /* entry 0 contains the media descriptor in its low byte,
@@ -112,6 +113,142 @@ static int find_extent(uint32_t cluster_nr)
 	}
 
 	return -1; /* not found */
+}
+
+/*
+ * Split or reuse an extent so that a new single-cluster extent is
+ * created for cluster_nr. Return the number of that extent.
+ */
+// TODO: record that the chain is damaged?
+static int punch_extent(uint32_t cluster_nr, uint32_t value)
+{
+	struct fat_extent new_ext;
+	int extent_nr = find_extent(cluster_nr);
+	if (extent_nr < 0)
+		return -1;
+
+	new_ext.starting_cluster = cluster_nr;
+	new_ext.ending_cluster = cluster_nr;
+	new_ext.offset = 0;
+	if (value == FAT_UNALLOCATED || value == FAT_BAD_CLUSTER) {
+		new_ext.extent_type = EXTENT_LITERAL;
+		new_ext.index = value;
+		new_ext.next = 0;
+	} else {
+		new_ext.extent_type = EXTENT_UNKNOWN;
+		new_ext.index = 0;
+		new_ext.next = value;
+	}
+
+	struct fat_extent *fe = &extents[extent_nr];
+	if (fe->starting_cluster == fe->ending_cluster) {
+		*fe = new_ext; // re-use
+		return extent_nr;
+	}
+
+	if (fe->starting_cluster == cluster_nr) {
+		fe->starting_cluster++;
+		if (fe->extent_type != EXTENT_LITERAL)
+			fe->offset += CLUSTER_SIZE;
+		extents.insert(extents.begin() + extent_nr, new_ext);
+		return extent_nr;
+	} else if (fe->ending_cluster == cluster_nr) {
+		fe->ending_cluster--;
+		if (fe->extent_type != EXTENT_LITERAL)
+			fe->next = cluster_nr;
+		extents.insert(extents.begin() + extent_nr + 1, new_ext);
+		return extent_nr + 1;
+	} else {
+		// the extent has to be split in two pieces
+		struct fat_extent post_ext;
+		post_ext.starting_cluster = cluster_nr + 1;
+		post_ext.ending_cluster = fe->ending_cluster;
+		post_ext.index = fe->index;
+		post_ext.offset = fe->offset + CLUSTER_SIZE
+			* (cluster_nr + 1 - fe->starting_cluster);
+		post_ext.next = fe->next;
+		post_ext.extent_type = fe->extent_type;
+		fe->ending_cluster = cluster_nr - 1;
+		if (fe->extent_type != EXTENT_LITERAL)
+			fe->next = cluster_nr;
+		// Because of the vector implementation it's more
+		// efficient to insert two elements and then fix up
+		// one of them, than to do two inserts.
+		extents.insert(extents.begin() + extent_nr + 1, 2, post_ext);
+		extents[extent_nr + 1] = new_ext;
+		return extent_nr + 1;
+	}
+}
+
+/* Try to add an entry to an extent.
+ * Don't worry about the following extent, the caller will patch it up.
+ * Return true iff the entry was added. */
+static bool try_inc_extent(int extent_nr, uint32_t value)
+{
+	struct fat_extent *fe = &extents[extent_nr];
+
+	/* Literal extents can be extended with an entry of the same value */
+	if (fe->extent_type == EXTENT_LITERAL) {
+		if (fe->index == value) {
+			fe->ending_cluster++;
+			return true;
+		}
+		return false;
+	}
+
+	/* All other extents are chains, which can be extended if the
+	 * next pointer was pointing at the following entry anyway.
+	 * (This won't happen in a properly constructed FAT, but can
+	 * often happen while processing newly allocated chains.) */
+	if (fe->next == fe->ending_cluster + 1) {
+		fe->next = value;
+		fe->ending_cluster++;
+		return true;
+	}
+
+	return false;
+}
+
+/* This extent had its first entry stolen. Adjust it. */
+// TODO: record that the chain is damaged?
+static void bump_extent(int extent_nr)
+{
+	struct fat_extent *fe = &extents[extent_nr];
+
+	if (fe->starting_cluster == fe->ending_cluster) {
+		extents.erase(extents.begin() + extent_nr);
+	} else if (fe->extent_type == EXTENT_LITERAL) {
+		fe->starting_cluster++;
+	} else {
+		fe->starting_cluster++;
+		fe->offset += CLUSTER_SIZE;
+	}
+}
+
+/* Try to change the last entry of this extent.
+ * Only do it if it makes sense.
+ * Return true iff the change was made. */
+static bool try_renext_extent(int extent_nr, uint32_t value)
+{
+	struct fat_extent *fe = &extents[extent_nr];
+
+	if (extent_nr < RESERVED_FAT_ENTRIES)
+		return false;
+	if (fe->extent_type == EXTENT_LITERAL)
+		return false;
+	if (fe->extent_type == EXTENT_FILEMAP)
+		return false; // these are enforced read-only
+
+	if (value == FAT_END_OF_CHAIN
+		|| (value > RESERVED_FAT_ENTRIES
+			&& value < g_data_clusters + RESERVED_FAT_ENTRIES)) {
+		// TODO: record that the chain is now open?
+		// and that the entry pointed to by the old 'next' is
+		// now an unlinked chain?
+		fe->next = value;
+		return true;
+	}
+	return false;
 }
 
 int fat_dir_index(uint32_t cluster_nr)
@@ -282,6 +419,47 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 	}
 }
 
+int fat_receive(const uint32_t *buf, uint32_t entry_nr, uint32_t entries)
+{
+	uint32_t *orig = (uint32_t *)malloc(entries * sizeof(*orig));
+
+	/* Construct the current FAT, to have something to diff against */
+	fat_fill(orig, entry_nr, entries);
+
+	for (uint32_t i = 0; i < entries; i++) {
+		if (buf[i] == orig[i])
+			continue;
+		if (entry_nr + i < RESERVED_FAT_ENTRIES)
+			return EIO;
+		if (orig[i] == htole32(FAT_BAD_CLUSTER))
+			return EIO;
+		int extent_nr = find_extent(entry_nr + i);
+		if (extent_nr <= 0)
+			return EIO;
+		struct fat_extent *fe = &extents[extent_nr];
+		uint32_t value = le32toh(buf[i]);
+		if (fe->starting_cluster == entry_nr + i) {
+			/* Try adding value to end of previous extent */
+			if (try_inc_extent(extent_nr - 1, value)) {
+				bump_extent(extent_nr);
+				continue;
+			}
+		}
+		if (fe->ending_cluster == entry_nr + i) {
+			/* See if value is a reasonable new
+			 * next value for this extent */
+			if (try_renext_extent(extent_nr, value))
+				continue;
+		}
+		/* split off a new extent for this entry, and record
+		 * it as a single-cluster chain */
+		extent_nr = punch_extent(entry_nr + i, value);
+	}
+
+	free(orig);
+	return 0;
+}
+
 int data_fill(char *buf, uint32_t len, uint32_t start_clust, uint32_t offset,
 	uint32_t *filled)
 {
@@ -309,6 +487,11 @@ int data_fill(char *buf, uint32_t len, uint32_t start_clust, uint32_t offset,
 			// bad block or unallocated; return 0s either way
 			memset(buf, 0, len);
 			break;
+		case EXTENT_UNKNOWN:
+			// if it wasn't in the data cache, then the cluster
+			// is still blank
+			memset(buf, 0, len);
+			break;
 		case EXTENT_DIR:
 			ret = dir_fill(buf, len, fe->index, src_offset);
 			break;
@@ -320,3 +503,7 @@ int data_fill(char *buf, uint32_t len, uint32_t start_clust, uint32_t offset,
 	*filled = len;
 	return ret;
 }
+
+#ifdef TESTING
+#include "tests/fat/fat_check.cpp"
+#endif

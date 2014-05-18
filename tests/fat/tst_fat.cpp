@@ -17,7 +17,11 @@
 #include "filemap.h"  // for filemap_fill prototype
 #include "dir.h" // for dir_fill prototype
 
+#include "fat_check.h"
+
 #include <errno.h>
+
+#include <sys/mman.h>
 
 #include <QtTest/QtTest>
 
@@ -407,6 +411,52 @@ private slots:
 
         int ret = data_fill(datapage, 4096, FAT_ENTRIES, 0, &filled);
         QCOMPARE(ret, EINVAL);
+    }
+
+    void test_write_extend_root() {
+        uint32_t rootclust = fat_alloc_dir(0);
+        QCOMPARE(rootclust, (uint32_t) 2);
+
+        fat_finalize(DATA_CLUSTERS);
+
+        fat_fill(fatpage, 0, 1024);
+        QCOMPARE(fatpage[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(fatpage[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatpage[2], (uint32_t) htole32(0x0fffffff));
+
+        // Extend the root dir by one cluster
+        fatpage[3] = fatpage[2];
+        fatpage[2] = htole32(3);
+
+        mprotect(fatpage, 4096, PROT_READ);
+        int ret = fat_receive(fatpage, 0, 1024);
+        mprotect(fatpage, 4096, PROT_READ | PROT_WRITE);
+        QCOMPARE(ret, 0);
+
+        QCOMPARE(fat_check_invariants(), (char *) 0);
+
+        // Now, first, check that we can read it back and see the
+        // changed FAT
+
+        memset(fatpage, -1, 4096);
+        fat_fill(fatpage, 0, 1024);
+
+        QCOMPARE(fatpage[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(fatpage[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatpage[2], (uint32_t) 3);
+        QCOMPARE(fatpage[3], (uint32_t) 0x0fffffff); // end of chain marker
+        VERIFY_ARRAY(fatpage, 4, 1024, (uint32_t) 0);
+
+        // Then check that reading the root dir now has two clusters
+        ret = data_fill(datapage, 4096, 2, 0, &filled);
+        QCOMPARE(ret, 0);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(datapage, MOCK_DIR_FILL, 4096, 0, 0);
+
+        ret = data_fill(datapage, 4096, 3, 0, &filled);
+        QCOMPARE(ret, 0);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(datapage, MOCK_DIR_FILL, 4096, 0, 4096);
     }
 };
 

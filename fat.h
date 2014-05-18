@@ -86,3 +86,8 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries);
  *         and leave the number of bytes in *filled */
 int data_fill(char *buf, uint32_t len, uint32_t start_clust, uint32_t offset,
 	uint32_t *filled);
+
+/* Interpret 'entries' FAT entries to 'vbuf', starting from 'entry_nr',
+ * make adjustments to the file mappings and directories if conclusions
+ * can be drawn, and store the entries for future reads. */
+int fat_receive(const uint32_t *buf, uint32_t entry_nr, uint32_t entries);
