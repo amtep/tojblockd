@@ -413,12 +413,14 @@ private slots:
         QCOMPARE(ret, EINVAL);
     }
 
+    // Try a fat_receive that extends the root dir by one cluster
     void test_write_extend_root() {
         uint32_t rootclust = fat_alloc_dir(0);
         QCOMPARE(rootclust, (uint32_t) 2);
 
         fat_finalize(DATA_CLUSTERS);
 
+        // Verify initial state
         fat_fill(fatpage, 0, 1024);
         QCOMPARE(fatpage[0], (uint32_t) 0x0ffffff8); // media byte marker
         QCOMPARE(fatpage[1], (uint32_t) 0x0fffffff); // end of chain marker
@@ -435,12 +437,9 @@ private slots:
 
         QCOMPARE(fat_check_invariants(), (char *) 0);
 
-        // Now, first, check that we can read it back and see the
-        // changed FAT
-
+        // Check that reading the FAT back shows the changes
         memset(fatpage, -1, 4096);
         fat_fill(fatpage, 0, 1024);
-
         QCOMPARE(fatpage[0], (uint32_t) 0x0ffffff8); // media byte marker
         QCOMPARE(fatpage[1], (uint32_t) 0x0fffffff); // end of chain marker
         QCOMPARE(fatpage[2], (uint32_t) 3);
@@ -457,6 +456,61 @@ private slots:
         QCOMPARE(ret, 0);
         QCOMPARE(filled, (uint32_t) 4096);
         check_fill(datapage, MOCK_DIR_FILL, 4096, 0, 4096);
+    }
+
+    // Try a fat_receive that extends the root dir by one cluster,
+    // with another directory in between
+    void test_write_extend_multipart() {
+        uint32_t rootclust = fat_alloc_dir(0);
+        QCOMPARE(rootclust, (uint32_t) 2);
+        uint32_t subdirclust = fat_alloc_dir(1);
+        QCOMPARE(subdirclust, (uint32_t) 3);
+        fat_finalize(DATA_CLUSTERS);
+
+        // Verify initial state
+        fat_fill(fatpage, 0, 1024);
+        QCOMPARE(fatpage[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(fatpage[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatpage[2], (uint32_t) htole32(0x0fffffff)); // root
+        QCOMPARE(fatpage[3], (uint32_t) htole32(0x0fffffff)); // subdir
+        VERIFY_ARRAY(fatpage, 4, 1024, (uint32_t) 0);
+
+        // Extend the root dir by one cluster
+        fatpage[4] = fatpage[2];
+        fatpage[2] = htole32(4);
+
+        mprotect(fatpage, 4096, PROT_READ);
+        int ret = fat_receive(fatpage, 0, 1024);
+        mprotect(fatpage, 4096, PROT_READ | PROT_WRITE);
+        QCOMPARE(ret, 0);
+        QCOMPARE(fat_check_invariants(), (char *) 0);
+
+        // Check that reading the FAT back shows the changes
+        memset(fatpage, -1, 4096);
+        fat_fill(fatpage, 0, 1024);
+        QCOMPARE(fatpage[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(fatpage[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatpage[2], (uint32_t) 4);
+        QCOMPARE(fatpage[3], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatpage[4], (uint32_t) 0x0fffffff); // end of chain marker
+        VERIFY_ARRAY(fatpage, 5, 1024, (uint32_t) 0);
+
+        // Then check that reading the root dir now has two clusters
+        ret = data_fill(datapage, 4096, 2, 0, &filled);
+        QCOMPARE(ret, 0);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(datapage, MOCK_DIR_FILL, 4096, 0, 0);
+
+        ret = data_fill(datapage, 4096, 4, 0, &filled);
+        QCOMPARE(ret, 0);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(datapage, MOCK_DIR_FILL, 4096, 0, 4096);
+
+        // And check that the subdir was left alone
+        ret = data_fill(datapage, 4096, 3, 0, &filled);
+        QCOMPARE(ret, 0);
+        QCOMPARE(filled, (uint32_t) 4096);
+        check_fill(datapage, MOCK_DIR_FILL, 4096, 1, 0);
     }
 };
 
