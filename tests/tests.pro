@@ -1,3 +1,3 @@
 TEMPLATE = subdirs
 
-SUBDIRS += fat dir
+SUBDIRS += fat dir image

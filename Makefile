@@ -33,6 +33,7 @@ tests/Makefile:
 check: tests
 	tests/fat/test-fat
 	tests/dir/test-dir
+	tests/image/test-image
 
 coverage: tests
 	lcov --zerocounters -d tests
@@ -40,6 +41,7 @@ coverage: tests
 	geninfo tests  # creates the .info tracefiles
 	lcov -e tests/fat/fat.*.info $$PWD/fat.cpp -o tests/fat.info
 	lcov -e tests/dir/dir.*.info $$PWD/dir.cpp -o tests/dir.info
+	lcov -e tests/image/image.*.info $$PWD/image.cpp -o tests/image.info
 
 covhtml: coverage
 	genhtml -o covhtml --demangle-cpp tests/*.info
