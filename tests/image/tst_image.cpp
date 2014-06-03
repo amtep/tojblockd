@@ -25,7 +25,7 @@
 
 class TestDataService : public DataService {
 public:
-    TestDataService() : fill_errno(0), receive_errno(0) { }
+    TestDataService() : fill_errno(0), receive_errno(0), deleted(false) { }
 
     virtual int fill(char *buf, uint32_t length, uint64_t offset) {
         struct call_info info = { buf, length, offset };
@@ -43,6 +43,7 @@ public:
 
     virtual void final_deref() {
         Q_ASSERT(m_refs == 0);
+        deleted = true;
     }
 
     struct call_info {
@@ -55,6 +56,7 @@ public:
     QList<call_info> receive_calls;
     int fill_errno;
     int receive_errno;
+    bool deleted;
 };
 
 class TestImage : public QObject {
@@ -730,6 +732,22 @@ private slots:
         QCOMPARE(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
+    }
+
+    // Register a data range of length 0, check that the module does not
+    // retain a ref.
+    void test_register_length0() {
+        TestDataService service;
+
+        image_register(&service, 5000, 0, 0);
+        QCOMPARE(service.m_refs, 0);
+        QVERIFY(service.deleted);
+
+        alloc_data(DATASIZE);
+        int ret = image_fill(data, 4000, DATASIZE);
+        QCOMPARE(ret, 0);
+        VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
+        QCOMPARE(service.fill_calls.size(), 0);
     }
 };
 
