@@ -319,21 +319,21 @@ private slots:
         const uint32_t start = 1024;
 
         addrow_2("overlap start of range",
-                start - 1024, DATASIZE,
-                1024,        size - 1024,            0,
+                start - 1024, 2 * size,
+                1024,        size,            0,
                 1024 + size, DATASIZE - 1024 - size, 0);
         addrow_2("exact fill",
                 start, 2 * size,
                 0,    size, 0,
                 size, size, 0);
         addrow_2("overlap end of range",
-                start + 1024, DATASIZE,
+                start + 1024, 2 * size,
                 0,           size - 1024, 1024,
                 size - 1024, size,        0);
         addrow_2("overlap some of each",
-                start + 1024, size + 1024,
+                start + 1024, size,
                 0,           size - 1024, 1024,
-                size - 1024, 1024,        0);
+                size - 1024, 1024, 0);
         addrow_2("large fill containing both",
                 start - 1024, 1024 + 2 * size + 1024,
                 1024,        size, 0,
@@ -381,9 +381,9 @@ private slots:
         const uint32_t delta = size + spacing;
 
         addrow_2("overlap start of range",
-                start - 1024, size,
-                1024, size - 1024, 0,
-                1024 + delta, size - 1024 - delta, 0);
+                start - 1024, 2 * size,
+                1024, size, 0,
+                1024 + delta, 2 * size - 1024 - delta, 0);
         addrow_2("exact fill",
                 start, 2 * size + spacing,
                 0, size, 0,
