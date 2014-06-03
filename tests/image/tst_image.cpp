@@ -142,12 +142,14 @@ private slots:
     // An uninitialized image should contain all zeroes
     void test_empty_fill() {
         alloc_data(DATASIZE);
-        image_fill(data, 0, DATASIZE);
+        int ret = image_fill(data, 0, DATASIZE);
+        QCOMPARE(ret, 0);
         VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
 
         // Test some random other chunk of it
         alloc_data(DATASIZE);
-        image_fill(data, 31337, DATASIZE/2);
+        ret = image_fill(data, 31337, DATASIZE/2);
+        QCOMPARE(ret, 0);
         VERIFY_ARRAY(data, 0, DATASIZE/2, (char) 0);
         VERIFY_ARRAY(data, DATASIZE/2, DATASIZE, (char) 1);
     }
@@ -570,6 +572,30 @@ private slots:
         QCOMPARE(info.offset, (uint64_t) 0);
     }
 
+    // Register two data services and do an image_fill that overlaps
+    // both, and check response to errors from service->receive.
+    void test_image_fill_errors() {
+        TestDataService::call_info info;
+        TestDataService service1;
+        TestDataService service2;
+
+        image_register(&service1, 1024, DATASIZE, 0);
+        image_register(&service2, 1024 + DATASIZE, DATASIZE, 0);
+        service1.fill_errno = EIO;
+
+        alloc_data(2 * DATASIZE);
+        int ret = image_fill(data, 1024, 2 * DATASIZE);
+        QCOMPARE(ret, EIO);
+
+        QCOMPARE(service1.fill_calls.size(), 1);
+        info = service1.fill_calls.takeFirst();
+        COMPARE_POINTERS(info.buf, data);
+        QCOMPARE(info.length, (uint32_t) DATASIZE);
+        QCOMPARE(info.offset, (uint64_t) 0);
+
+        QCOMPARE(service2.fill_calls.size(), 0);
+    }
+
     // Register two data services and do an image_receive that overlaps
     // both, and check response to errors from service->receive.
     void test_image_receive_errors() {
@@ -736,7 +762,7 @@ private slots:
 
     // Register a data range of length 0, check that the module does not
     // retain a ref.
-    void test_register_length0() {
+    void test_register_zerolength() {
         TestDataService service;
 
         image_register(&service, 5000, 0, 0);
@@ -748,6 +774,29 @@ private slots:
         QCOMPARE(ret, 0);
         VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
         QCOMPARE(service.fill_calls.size(), 0);
+    }
+
+    // Receive 0 bytes of data, check that it does not interfere with
+    // a registered range
+    void test_receive_zerolength() {
+        TestDataService::call_info info;
+        TestDataService service;
+
+        image_register(&service, 1024, DATASIZE, 0);
+
+        alloc_ro_data(0);
+        int ret = image_receive(data, 2048, 0);
+        QCOMPARE(ret, 0);
+
+        alloc_data(DATASIZE);
+        ret = image_fill(data, 1024, DATASIZE);
+        QCOMPARE(ret, 0);
+        VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
+        QCOMPARE(service.fill_calls.size(), 1);
+        info = service.fill_calls.takeFirst();
+        COMPARE_POINTERS(info.buf, data);
+        QCOMPARE(info.length, (uint32_t) DATASIZE);
+        QCOMPARE(info.offset, (uint64_t) 0);
     }
 };
 
