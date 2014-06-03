@@ -55,6 +55,11 @@
         } \
     } while (0);
 
+// Make sure QCOMPARE compares the pointers instead of what they point to.
+// (which tends to be a problem with char * buffers).
+#define COMPARE_POINTERS(actual, expected) \
+    QCOMPARE((void *)(actual), (void *)(expected))
+
 namespace QTest {
 template<> char *toString<unsigned char>(const unsigned char &);
 }

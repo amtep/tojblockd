@@ -169,7 +169,7 @@ private slots:
         QCOMPARE(service.fill_calls.size(), 1);
         TestDataService::call_info info = service.fill_calls.takeFirst();
         QFETCH(size_t, bufpos);
-        QCOMPARE(info.buf, data + bufpos);
+        COMPARE_POINTERS(info.buf, data + bufpos);
         QTEST(info.length, "fill_length");
         QTEST(info.offset, "offset");
     }
@@ -212,7 +212,7 @@ private slots:
         QCOMPARE(service.fill_calls.size(), 1);
         TestDataService::call_info info = service.fill_calls.takeFirst();
         QFETCH(size_t, bufpos);
-        QCOMPARE(info.buf, data + bufpos);
+        COMPARE_POINTERS(info.buf, data + bufpos);
         QTEST(info.length, "fill_length");
         QTEST(info.offset, "offset");
     }
@@ -271,12 +271,12 @@ private slots:
         QCOMPARE(service.fill_calls.size(), 2);
 
         TestDataService::call_info info = service.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data + 1024);
+        COMPARE_POINTERS(info.buf, data + 1024);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
 
         info = service.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data + 10240);
+        COMPARE_POINTERS(info.buf, data + 10240);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) DATASIZE);
     }
@@ -302,14 +302,14 @@ private slots:
         QCOMPARE(service1.fill_calls.size(), 1);
         info = service1.fill_calls.takeFirst();
         QFETCH(size_t, bufpos1);
-        QCOMPARE(info.buf, data + bufpos1);
+        COMPARE_POINTERS(info.buf, data + bufpos1);
         QTEST(info.length, "fill_length1");
         QTEST(info.offset, "offset1");
 
         QCOMPARE(service2.fill_calls.size(), 1);
         info = service2.fill_calls.takeFirst();
         QFETCH(size_t, bufpos2);
-        QCOMPARE(info.buf, data + bufpos2);
+        COMPARE_POINTERS(info.buf, data + bufpos2);
         QTEST(info.length, "fill_length2");
         QTEST(info.offset, "offset2");
     }
@@ -361,14 +361,14 @@ private slots:
         QCOMPARE(service1.fill_calls.size(), 1);
         info = service1.fill_calls.takeFirst();
         QFETCH(size_t, bufpos1);
-        QCOMPARE(info.buf, data + bufpos1);
+        COMPARE_POINTERS(info.buf, data + bufpos1);
         QTEST(info.length, "fill_length1");
         QTEST(info.offset, "offset1");
 
         QCOMPARE(service2.fill_calls.size(), 1);
         info = service2.fill_calls.takeFirst();
         QFETCH(size_t, bufpos2);
-        QCOMPARE(info.buf, data + bufpos2);
+        COMPARE_POINTERS(info.buf, data + bufpos2);
         QTEST(info.length, "fill_length2");
         QTEST(info.offset, "offset2");
     }
@@ -422,13 +422,13 @@ private slots:
         VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
         QCOMPARE(service1.fill_calls.size(), 1);
         info = service1.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE/2);
         QCOMPARE(info.offset, (uint64_t) 0);
 
         QCOMPARE(service2.fill_calls.size(), 1);
         info = service2.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data + DATASIZE/2);
+        COMPARE_POINTERS(info.buf, data + DATASIZE/2);
         QCOMPARE(info.length, (uint32_t) DATASIZE/2);
         QCOMPARE(info.offset, (uint64_t) 0);
     }
@@ -479,7 +479,7 @@ private slots:
         QCOMPARE(service.fill_calls.size(), 1);
         TestDataService::call_info info = service.fill_calls.takeFirst();
         QFETCH(size_t, bufpos);
-        QCOMPARE(info.buf, data + bufpos);
+        COMPARE_POINTERS(info.buf, data + bufpos);
         QTEST(info.length, "fill_length");
         QTEST(info.offset, "offset");
     }
@@ -529,7 +529,7 @@ private slots:
         QCOMPARE(service.m_refs, 1);
         QCOMPARE(service.receive_calls.size(), 1);
         info = service.receive_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, DATASIZE - delta);
         QCOMPARE(info.offset, (uint64_t) delta);
 
@@ -559,13 +559,13 @@ private slots:
 
         QCOMPARE(service1.receive_calls.size(), 1);
         info = service1.receive_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
 
         QCOMPARE(service2.receive_calls.size(), 1);
         info = service2.receive_calls.takeFirst();
-        QCOMPARE(info.buf, data + DATASIZE + spacing);
+        COMPARE_POINTERS(info.buf, data + DATASIZE + spacing);
         QCOMPARE(info.length, DATASIZE - spacing);
         QCOMPARE(info.offset, (uint64_t) 0);
     }
@@ -596,13 +596,13 @@ private slots:
 
         QCOMPARE(service1.fill_calls.size(), 1);
         info = service1.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
 
         QCOMPARE(service2.fill_calls.size(), 1);
         info = service2.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data + DATASIZE);
+        COMPARE_POINTERS(info.buf, data + DATASIZE);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
     }
@@ -658,7 +658,7 @@ private slots:
         VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
         QCOMPARE(service.fill_calls.size(), 1);
         info = service.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) DATASIZE);
     }
@@ -680,7 +680,7 @@ private slots:
         VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
         QCOMPARE(service.fill_calls.size(), 1);
         info = service.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE/2);
         QCOMPARE(info.offset, (uint64_t) 0);
     }
@@ -729,7 +729,7 @@ private slots:
         VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
         QCOMPARE(service.fill_calls.size(), 1);
         info = service.fill_calls.takeFirst();
-        QCOMPARE(info.buf, data);
+        COMPARE_POINTERS(info.buf, data);
         QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
     }
