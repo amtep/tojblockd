@@ -94,6 +94,7 @@ int image_receive(const char *buf, uint64_t start, uint32_t length);
  * functions and the data from image_receive. Undefined parts of the
  * image will be all zeroes.
  * Return 0 for success or an errno for failure.
+ * Buffer contents are undefined after failure.
  */
 int image_fill(char *buf, uint64_t start, uint32_t length);
 
