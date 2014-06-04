@@ -15,12 +15,15 @@
 
 #include "fat.h"
 
+#include <assert.h>
 #include <string.h>
+
 #include <errno.h>
 
 #include <algorithm>
 
 #include "vfat.h"
+#include "image.h"
 #include "dir.h"
 #include "filemap.h"
 
@@ -114,6 +117,11 @@ static int find_extent(uint32_t cluster_nr)
 
 	return -1; /* not found */
 }
+
+class FatDataService : public DataService {
+	virtual int fill(char *buf, uint32_t length, uint64_t offset);
+	virtual int receive(const char *buf, uint32_t length, uint64_t offset);
+} fatservice;
 
 /*
  * Split or reuse an extent so that a new single-cluster extent is
@@ -374,12 +382,27 @@ void fat_finalize(uint32_t max_free_clusters)
 		extents[pos] = extents_from_end[i];
 
 	extents_from_end.clear();
+
+	image_register(&fatservice, RESERVED_SECTORS * SECTOR_SIZE,
+			ALIGN((g_data_clusters + RESERVED_FAT_ENTRIES) * 4,
+					SECTOR_SIZE), 0);
 }
 
-void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
+void fat_fill(void *buf, uint32_t entry_nr, uint32_t entries)
 {
-	uint32_t *buf = (uint32_t *)vbuf;
+	image_fill((char *) buf, RESERVED_SECTORS * SECTOR_SIZE + entry_nr * 4,
+			entries * 4);
+}
+
+int FatDataService::fill(char *cbuf, uint32_t length, uint64_t offset)
+{
+	uint32_t *buf = (uint32_t *) cbuf;
+	uint32_t entry_nr = offset / 4;
+	uint32_t entries = length / 4;
 	uint32_t i = 0;
+
+	assert(offset % 4 == 0);
+	assert(length % 4 == 0);
 
 	int extent_nr = find_extent(entry_nr);
 	while (extent_nr >= 0) {
@@ -398,7 +421,7 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 				buf[i++] = htole32(fe->next);
 		}
 		if (i == entries)
-			return;
+			return 0;
 		// This is a fast version of calling find_extent(entry_nr + i)
 		// It relies on the extents being contiguous.
 		if (extent_nr < (int) extents.size() - 1)
@@ -417,14 +440,29 @@ void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries)
 	for (; i < entries; i++) {
 		buf[i] = htole32(FAT_BAD_CLUSTER);
 	}
+
+	return 0;
 }
 
 int fat_receive(const uint32_t *buf, uint32_t entry_nr, uint32_t entries)
 {
-	uint32_t *orig = (uint32_t *)malloc(entries * sizeof(*orig));
+	return image_receive((char *) buf,
+			RESERVED_SECTORS * SECTOR_SIZE + entry_nr * 4,
+			entries * 4);
+}
+
+int FatDataService::receive(const char *cbuf, uint32_t length, uint64_t offset)
+{
+	uint32_t *buf = (uint32_t *) cbuf;
+	uint32_t entries = length / 4;
+	uint32_t entry_nr = offset / 4;
+
+	assert(length % 4 == 0);
+	assert(offset % 4 == 0);
 
 	/* Construct the current FAT, to have something to diff against */
-	fat_fill(orig, entry_nr, entries);
+	uint32_t *orig = (uint32_t *)malloc(length);
+	this->fill((char *) orig, length, offset);
 
 	for (uint32_t i = 0; i < entries; i++) {
 		if (buf[i] == orig[i])

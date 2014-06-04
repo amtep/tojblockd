@@ -5,6 +5,8 @@
 #define SECTOR_SIZE 512
 #define CLUSTER_SIZE 4096  /* must be a power of two */
 
+#define RESERVED_SECTORS 32 /* before first FAT */
+
 #define ALIGN(x, sz) (((x) + (sz) - 1) & ~((typeof(x))(sz) - 1))
 
 void vfat_init(const char *target_dir, uint64_t free_space, const char *label);

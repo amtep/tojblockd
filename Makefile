@@ -5,15 +5,16 @@ CXXFLAGS=-W -Wall -O2 $(DBG) -Iimport
 CFLAGS=-W -Wall -O2 $(DBG) -Iimport
 
 tojblockd.o: vfat.h import/nbd.h import/sd_notify.h
-vfat.o: vfat.h import/ConvertUTF.h fat.h dir.h filemap.h
-fat.o: fat.h dir.h filemap.h
+vfat.o: vfat.h import/ConvertUTF.h fat.h dir.h filemap.h image.h
+fat.o: fat.h dir.h filemap.h image.h
 dir.o: dir.h vfat.h fat.h
 filemap.o: filemap.h
+image.o: image.h
 
 import/ConvertUTF.o: import/ConvertUTF.h
 import/sd_notify.o: import/sd_notify.h
 
-tojblockd: tojblockd.o vfat.o import/ConvertUTF.o import/sd_notify.o fat.o dir.o filemap.o
+tojblockd: tojblockd.o vfat.o import/ConvertUTF.o import/sd_notify.o fat.o dir.o filemap.o image.o
 	$(CXX) $^ -o $@
 
 .PHONY: clean tests check coverage

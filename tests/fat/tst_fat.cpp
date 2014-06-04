@@ -128,16 +128,16 @@ private slots:
 
     // Check that the last page of the fat is correct
     void test_end_of_fat() {
-        uint32_t last_page_start = FAT_ENTRIES - (FAT_ENTRIES % 1024);
+        uint32_t last_sector_start = FAT_ENTRIES - (FAT_ENTRIES % 128);
 
         fat_finalize(DATA_CLUSTERS);
 
-        fat_fill(fatpage, last_page_start, 1024);
+        fat_fill(fatpage, last_sector_start, 128);
         // All valid fat entries should still be 0, and the rest should
         // contain bad cluster markers.
-        const int boundary = FAT_ENTRIES - last_page_start;
+        const int boundary = FAT_ENTRIES - last_sector_start;
         VERIFY_ARRAY(fatpage, 0, boundary, (uint32_t) 0);
-        VERIFY_ARRAY(fatpage, boundary, 1024, (uint32_t) 0x0ffffff7);
+        VERIFY_ARRAY(fatpage, boundary, 128, (uint32_t) 0x0ffffff7);
     }
 
     // Try allocating one directory and check the result

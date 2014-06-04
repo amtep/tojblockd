@@ -33,12 +33,12 @@
 
 #include "ConvertUTF.h"
 
+#include "image.h"
 #include "fat.h"
 #include "dir.h"
 #include "filemap.h"
 
 #define SECTORS_PER_CLUSTER (CLUSTER_SIZE / SECTOR_SIZE)
-#define RESERVED_SECTORS 32  /* before first FAT */
 
 /*
  * The layout of a FAT filesystem is very simple.
@@ -227,6 +227,9 @@ static void init_boot_sector(const char *label)
 		memcpy(boot_sector + VOLUME_LABEL_OFFSET, label, len);
 		memset(boot_sector + VOLUME_LABEL_OFFSET + len, ' ', 11 - len);
 	}
+
+	// TODO make this a data service
+	image_receive((char *) boot_sector, 0, sizeof(boot_sector));
 }
 
 static void init_fsinfo_sector(void)
@@ -238,6 +241,9 @@ static void init_fsinfo_sector(void)
 	memcpy(&fsinfo_sector[0x1e8], "\xff\xff\xff\xff", 4);
 	memcpy(&fsinfo_sector[0x1ec], "\xff\xff\xff\xff", 4);
 	memcpy(&fsinfo_sector[0x1fc], "\0\0\x55\xaa", 4);  /* magic here too */
+
+	// TODO make this a data service
+	image_receive((char *) fsinfo_sector, SECTOR_SIZE, sizeof(fsinfo_sector));
 }
 
 static int convert_name(const char *name8, int namelen, filename_t & name16)
@@ -366,6 +372,8 @@ static void scan_target_dir(const char *target_dir)
 
 void vfat_init(const char *target_dir, uint64_t free_space, const char *label)
 {
+	image_init();
+
 	init_boot_sector(label);
 	init_fsinfo_sector();
 
