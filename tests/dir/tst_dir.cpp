@@ -14,20 +14,16 @@
  */
 
 #include "dir.h"
-#include "fat.h"
-#include "filemap.h" // for filemap_fill prototype
 
 #include <stdlib.h>
 #include <errno.h>
 
 #include <QtTest/QtTest>
 
-#include "../helpers.h"
+#include "fat.h"
+#include "image.h"
 
-// stub for linking with fat.cpp
-int filemap_fill(char *, uint32_t, int, uint32_t) {
-    return EINVAL;
-}
+#include "../helpers.h"
 
 static filename_t expand_name(const char *name) {
     int len = strlen(name) + 1; // include the trailing 0
@@ -171,6 +167,7 @@ private slots:
         page = (char *) alloc_guarded(4096);
         setenv("TZ", "UTC+1", true); // ensure consistent results from localtime
 
+        image_init();
         fat_init(DATA_CLUSTERS);
         dir_init();
     }
@@ -180,26 +177,25 @@ private slots:
     }
 
     void test_empty_root() {
-        int ret = dir_fill(page, 4096, 0, 0);
+        int ret = image_fill(page, fat_cluster_pos(2), 4096);
         QCOMPARE(ret, 0);
         VERIFY_ARRAY(page, 0, 4096, (char) 0); // root is still empty
-        // any other index should fail
-        QVERIFY(dir_fill(page, 4096, 1, 0) != 0);
     }
 
     // A directory should not fill more than its requested length
     void test_partial_fill() {
         char *buf = (char *) alloc_guarded(2000);
-        int ret = dir_fill(buf, 2000, 0, 1000);
+        int ret = image_fill(buf, fat_cluster_pos(2) + 1000, 2000);
         QCOMPARE(ret, 0);
         VERIFY_ARRAY(buf, 0, 2000, (char) 0);
+        free_guarded(buf);
     }
 
     // Try creating one file in the root directory
     void test_dir_entry() {
         QVERIFY(dir_add_entry(0, test_clust, expand_name("testname.tst"),
                 test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-        int ret = dir_fill(page, 4096, 0, 0);
+        int ret = image_fill(page, fat_cluster_pos(2), 4096);
         QCOMPARE(ret, 0);
         lfn_entry_1_expect[13] = short_1_checksum;
         COMPARE_ARRAY((unsigned char *) page, lfn_entry_1_expect, 32);
@@ -214,7 +210,7 @@ private slots:
         QVERIFY(dir_add_entry(0, dir_clust, expand_name("subdir"),
                 test_file_size, FAT_ATTR_DIRECTORY | FAT_ATTR_READ_ONLY,
                 test_mtime, test_atime));
-        int ret = dir_fill(page, 4096, 0, 0);
+        int ret = image_fill(page, fat_cluster_pos(2), 4096);
         QCOMPARE(ret, 0);
         dir_entry_expect[26] = dir_clust;
         dir_entry_expect[27] = dir_clust >> 8;
@@ -228,7 +224,7 @@ private slots:
         QVERIFY(dir_add_entry(dir_clust, test_clust,
                 expand_name("testname.tst"), test_file_size,
                 FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-        ret = dir_fill(page, 4096, 1, 0);
+        ret = image_fill(page, fat_cluster_pos(dir_clust), 4096);
         QCOMPARE(ret, 0);
         lfn_entry_1_expect[13] = short_2_checksum;
         COMPARE_ARRAY((unsigned char *) page, lfn_entry_1_expect, 32);
@@ -243,7 +239,7 @@ private slots:
         const char *name = "abcdefghijklmnopqrstuvwxyz";
         QVERIFY(dir_add_entry(0, test_clust, expand_name(name),
             test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-        int ret = dir_fill(page, 4096, 0, 0);
+        int ret = image_fill(page, fat_cluster_pos(2), 4096);
         QCOMPARE(ret, 0);
         lfn_entry_3_expect[13] = short_1_checksum;
         lfn_entry_3_expect[13 + 32] = short_1_checksum;
@@ -267,15 +263,12 @@ private slots:
             QVERIFY(dir_add_entry(0, test_clust + i, expand_name(name),
                     test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
         }
-	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
-	QCOMPARE(fat_dir_index(3), -1); // still nothing in second data cluster
+        QCOMPARE(fat_alloc_beginning(1), (uint32_t) 3); // cluster 3 was free
 
         // this call should expand the directory in the FAT
         QVERIFY(dir_add_entry(0, test_clust + i++, expand_name("testname.tst"),
                 test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
-	QCOMPARE(fat_dir_index(3), 0); // and also in second data cluster
-	QCOMPARE(fat_dir_index(4), -1); // but not in third
+        QCOMPARE(fat_alloc_beginning(1), (uint32_t) 5); // cluster 4 was taken
 
         // now try it again with the second cluster
         // (regression test for a bug where it started allocating
@@ -285,17 +278,20 @@ private slots:
             QVERIFY(dir_add_entry(0, test_clust + i, expand_name(name),
                     test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
         }
-	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
-	QCOMPARE(fat_dir_index(3), 0); // and also in second data cluster
-	QCOMPARE(fat_dir_index(4), -1); // but not in third
+        QCOMPARE(fat_alloc_beginning(1), (uint32_t) 6); // cluster 6 was free
 
         // this call should expand the directory in the FAT again
         QVERIFY(dir_add_entry(0, test_clust + i++, expand_name("test2.tst"),
                 test_file_size, FAT_ATTR_READ_ONLY, test_mtime, test_atime));
-	QCOMPARE(fat_dir_index(2), 0); // root dir in first data cluster
-	QCOMPARE(fat_dir_index(3), 0); // and also in second data cluster
-	QCOMPARE(fat_dir_index(4), 0); // and in the third
-	QCOMPARE(fat_dir_index(5), -1); // but not in the fourth
+        QCOMPARE(fat_alloc_beginning(1), (uint32_t) 8); // cluster 7 was taken
+
+        // Check if the tail of the dir is indeed in cluster 7
+        int ret = image_fill(page, fat_cluster_pos(7), 4096);
+        QCOMPARE(ret, 0);
+        // quick check for start of LFN
+	QCOMPARE((unsigned char) (page[0]), (unsigned char) 0x41);
+        // Quick check if shortname counter has seen the right nr of names
+	QCOMPARE((unsigned char) (page[32 + 2]), (unsigned char) (i & 0x1f));
     }
 
     void test_bad_input() {

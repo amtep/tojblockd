@@ -43,9 +43,7 @@ struct fat_extent {
 
 enum {
 	EXTENT_LITERAL = 0, /* "index" is literal value ("next" not used) */
-	EXTENT_DIR = 1, /* index is into dir_infos */
-	EXTENT_FILEMAP = 2, /* index is into filemaps */
-	EXTENT_UNKNOWN = 3, /* unclassified chain written to our image */
+	EXTENT_UNKNOWN = 1, /* unclassified chain written to our image */
 };
 
 /* entry 0 contains the media descriptor in its low byte,
@@ -72,10 +70,13 @@ static std::vector<struct fat_extent> extents;
 static std::vector<struct fat_extent> extents_from_end;
 
 static uint32_t g_data_clusters;
+static uint64_t g_fat_size;
 
 void fat_init(uint32_t data_clusters)
 {
 	g_data_clusters = data_clusters;
+	g_fat_size = ALIGN((g_data_clusters + RESERVED_FAT_ENTRIES) * 4,
+			SECTOR_SIZE);
 	extents.clear();
 	extents.push_back(entry_0);
 	extents.push_back(entry_1);
@@ -244,8 +245,6 @@ static bool try_renext_extent(int extent_nr, uint32_t value)
 		return false;
 	if (fe->extent_type == EXTENT_LITERAL)
 		return false;
-	if (fe->extent_type == EXTENT_FILEMAP)
-		return false; // these are enforced read-only
 
 	if (value == FAT_END_OF_CHAIN
 		|| (value > RESERVED_FAT_ENTRIES
@@ -259,53 +258,44 @@ static bool try_renext_extent(int extent_nr, uint32_t value)
 	return false;
 }
 
-int fat_dir_index(uint32_t cluster_nr)
+uint64_t fat_cluster_pos(uint32_t cluster_nr)
 {
-	struct fat_extent *fe;
-	int extent_nr = find_extent(cluster_nr);
-
-	if (extent_nr < 0)
-		return -1;
-
-	fe = &extents[extent_nr];
-	if (fe->extent_type != EXTENT_DIR)
-		return -1;
-
-	return fe->index;
+	return (uint64_t) (RESERVED_SECTORS * SECTOR_SIZE) + g_fat_size
+		+ (cluster_nr - 2) * CLUSTER_SIZE;
 }
 
-uint32_t fat_alloc_dir(int dir_nr)
+uint32_t fat_alloc_beginning(uint32_t clusters)
 {
 	struct fat_extent new_extent;
 
 	new_extent.starting_cluster = first_free_cluster();
-	new_extent.ending_cluster = new_extent.starting_cluster;
-	new_extent.index = dir_nr;
+	new_extent.ending_cluster = new_extent.starting_cluster + clusters - 1;
+	new_extent.index = 0;
 	new_extent.offset = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
-	new_extent.extent_type = EXTENT_DIR;
+	new_extent.extent_type = EXTENT_UNKNOWN;
 
 	extents.push_back(new_extent);
 
 	return new_extent.starting_cluster;
 }
 
-uint32_t fat_alloc_filemap(int filemap_nr, uint32_t clusters)
+uint32_t fat_alloc_end(uint32_t clusters)
 {
 	struct fat_extent new_extent;
 
 	new_extent.ending_cluster = last_free_cluster();
 	new_extent.starting_cluster = new_extent.ending_cluster - clusters + 1;
-	new_extent.index = filemap_nr;
+	new_extent.index = 0;
 	new_extent.offset = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
-	new_extent.extent_type = EXTENT_FILEMAP;
+	new_extent.extent_type = EXTENT_UNKNOWN;
 
 	extents_from_end.push_back(new_extent);
 	return new_extent.starting_cluster;
 }
 
-bool fat_extend(uint32_t cluster_nr, uint32_t clusters)
+uint32_t fat_extend_chain(uint32_t cluster_nr)
 {
 	struct fat_extent new_extent;
 	struct fat_extent *fe;
@@ -315,23 +305,22 @@ bool fat_extend(uint32_t cluster_nr, uint32_t clusters)
 	while (extent_nr >= 0 && extents[extent_nr].next != FAT_END_OF_CHAIN) {
 		/* EXTENT_LITERAL extents are not chained */
 		if (extents[extent_nr].extent_type == EXTENT_LITERAL)
-			return false;
+			return 0;
 		extent_nr = find_extent(extents[extent_nr].next);
 	}
 
 	if (extent_nr < 0)
-		return false;
+		return 0;
 
 	if (extent_nr == (int) extents.size() - 1) {
 		/* yay, shortcut: just extend this extent */
-		extents[extent_nr].ending_cluster += clusters;
-		return true;
+		return ++extents[extent_nr].ending_cluster;
 	}
 
 	fe = &extents[extent_nr];
 
 	new_extent.starting_cluster = first_free_cluster();
-	new_extent.ending_cluster = new_extent.starting_cluster + clusters - 1;
+	new_extent.ending_cluster = new_extent.starting_cluster;
 	new_extent.index = fe->index;
 	new_extent.offset = fe->offset +
 		(fe->ending_cluster - fe->starting_cluster + 1) * CLUSTER_SIZE;
@@ -340,7 +329,7 @@ bool fat_extend(uint32_t cluster_nr, uint32_t clusters)
 	fe->next = new_extent.starting_cluster;
 
 	extents.push_back(new_extent);
-	return true;
+	return new_extent.ending_cluster;
 }
 
 void fat_finalize(uint32_t max_free_clusters)
@@ -384,14 +373,7 @@ void fat_finalize(uint32_t max_free_clusters)
 	extents_from_end.clear();
 
 	image_register(&fatservice, RESERVED_SECTORS * SECTOR_SIZE,
-			ALIGN((g_data_clusters + RESERVED_FAT_ENTRIES) * 4,
-					SECTOR_SIZE), 0);
-}
-
-void fat_fill(void *buf, uint32_t entry_nr, uint32_t entries)
-{
-	image_fill((char *) buf, RESERVED_SECTORS * SECTOR_SIZE + entry_nr * 4,
-			entries * 4);
+			g_fat_size, 0);
 }
 
 int FatDataService::fill(char *cbuf, uint32_t length, uint64_t offset)
@@ -444,13 +426,6 @@ int FatDataService::fill(char *cbuf, uint32_t length, uint64_t offset)
 	return 0;
 }
 
-int fat_receive(const uint32_t *buf, uint32_t entry_nr, uint32_t entries)
-{
-	return image_receive((char *) buf,
-			RESERVED_SECTORS * SECTOR_SIZE + entry_nr * 4,
-			entries * 4);
-}
-
 int FatDataService::receive(const char *cbuf, uint32_t length, uint64_t offset)
 {
 	uint32_t *buf = (uint32_t *) cbuf;
@@ -496,50 +471,6 @@ int FatDataService::receive(const char *cbuf, uint32_t length, uint64_t offset)
 
 	free(orig);
 	return 0;
-}
-
-int data_fill(char *buf, uint32_t len, uint32_t start_clust, uint32_t offset,
-	uint32_t *filled)
-{
-	int extent_nr = find_extent(start_clust);
-	struct fat_extent *fe;
-	uint32_t src_offset;
-	int ret = 0;
-
-	if (extent_nr < 0)
-		return EINVAL;
-
-	fe = &extents[extent_nr];
-
-	// Clip len if the current extent does not go that far
-	uint32_t end_clust = start_clust + (offset + len - 1) / CLUSTER_SIZE;
-	if (end_clust > fe->ending_cluster)
-		len = (fe->ending_cluster - start_clust + 1) * CLUSTER_SIZE
-			- offset;
-
-	src_offset = (start_clust - fe->starting_cluster) * CLUSTER_SIZE
-		+ fe->offset + offset;
-
-	switch (fe->extent_type) {
-		case EXTENT_LITERAL:
-			// bad block or unallocated; return 0s either way
-			memset(buf, 0, len);
-			break;
-		case EXTENT_UNKNOWN:
-			// if it wasn't in the data cache, then the cluster
-			// is still blank
-			memset(buf, 0, len);
-			break;
-		case EXTENT_DIR:
-			ret = dir_fill(buf, len, fe->index, src_offset);
-			break;
-		case EXTENT_FILEMAP:
-			ret = filemap_fill(buf, len, fe->index, src_offset);
-			break;
-	}
-
-	*filled = len;
-	return ret;
 }
 
 #ifdef TESTING

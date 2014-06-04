@@ -51,43 +51,25 @@
 void fat_init(uint32_t data_clusters);
 
 /*
+ * Returns the starting position in the image of data cluster 'cluster'
+ */
+uint64_t fat_cluster_pos(uint32_t cluster);
+
+/*
  * These are valid in the construction phase
  */
 
-/* Reserve a cluster for a new directory and return its number. */
-uint32_t fat_alloc_dir(int dir_nr);
+/* Allocate a chain of 'clusters' clusters near the beginning of the FAT
+ * and return the number of the first allocated cluster. */
+uint32_t fat_alloc_beginning(uint32_t clusters);
 
-/* Reserve 'clusters' clusters for a mapped file and return the first. */
-uint32_t fat_alloc_filemap(int filemap_nr, uint32_t clusters);
+/* Allocate a chain of 'clusters' clusters near the end of the FAT and
+ * return the number of the first allocated cluster. */
+uint32_t fat_alloc_end(uint32_t clusters);
 
-/* Add 'clusters' clusters to the FAT chain starting at 'cluster_nr'
- * Return true for success */
-bool fat_extend(uint32_t cluster_nr, uint32_t clusters);
-
-/* Return the dir number of a directory at this data cluster,
- * or -1 if there is no directory there */
-int fat_dir_index(uint32_t cluster_nr);
+/* Add a cluster to the FAT chain containing 'cluster_nr'.
+ * Return its new ending cluster for success, or 0 for failure. */
+uint32_t fat_extend_chain(uint32_t cluster_nr);
 
 /* Transition from construction stage to full service. */
 void fat_finalize(uint32_t max_free_clusters);
-
-/*
- * These are valid after construction is finalized
- */
-
-/* Write 'entries' FAT entries to 'vbuf', starting from 'entry_nr' */
-void fat_fill(void *vbuf, uint32_t entry_nr, uint32_t entries);
-
-/* Fill all or part of 'buf' with data from the image, starting from
- * byte 'offset' at data cluster 'start_clust'. The length may span
- * multiple clusters, but the function does not have to fill more than
- * to the end of the starting cluster.
- * Result: return 0 for success or errno for failure,
- *         and leave the number of bytes in *filled */
-int data_fill(char *buf, uint32_t len, uint32_t start_clust, uint32_t offset,
-	uint32_t *filled);
-
-/* Interpret 'entries' FAT entries to 'vbuf', starting from 'entry_nr',
- * make adjustments to the file mappings and directories if conclusions
- * can be drawn, and store the entries for future reads. */
-int fat_receive(const uint32_t *buf, uint32_t entry_nr, uint32_t entries);

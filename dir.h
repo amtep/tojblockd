@@ -51,9 +51,3 @@ bool dir_add_entry(uint32_t parent_clust, uint32_t entry_clust,
 
 /* Register a new directory and return its starting cluster number */
 uint32_t dir_alloc_new(const char *path);
-
-/* Fill all or part of 'buf' with data from the directory, starting from
- * byte 'offset'. The function will fill the whole length, with 0-padding
- * if necessary.
- * Result: return 0 for success or errno for failure */
-int dir_fill(char *buf, uint32_t len, int dir_index, uint32_t offset);

@@ -91,8 +91,6 @@
  * but at least not limiting the types of a or b */
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-static const char *g_top_dir;
-
 static uint32_t g_fat_sectors;
 static uint32_t g_data_clusters;
 static uint32_t g_total_sectors;
@@ -141,66 +139,7 @@ static filename_t dot_dot_name;  // contains ".."
 
 int vfat_fill(void *buf, uint64_t from, uint32_t len)
 {
-	int ret = 0;
-
-	/*
-	 * This is structured as a loop so that each clause can handle
-	 * just the case it's focused on and then pass the buck
-	 * by setting maxcopy smaller than len.
-	 */
-	while (len > 0 && ret == 0) {
-		uint32_t maxcopy = 0;
-		uint32_t sector_nr = from / SECTOR_SIZE;
-		if (sector_nr < RESERVED_SECTORS) {
-			uint32_t offset = from % SECTOR_SIZE;
-			if (sector_nr == 0) {
-				maxcopy = min(len, SECTOR_SIZE - from);
-				memcpy(buf, &boot_sector[offset], maxcopy);
-			} else if (sector_nr == 1) {
-				maxcopy = min(len, 2*SECTOR_SIZE - from);
-				memcpy(buf, &fsinfo_sector[offset], maxcopy);
-			} else {
-				maxcopy = min(len,
-					RESERVED_SECTORS * SECTOR_SIZE - from);
-				memset(buf, 0, maxcopy);
-			}
-		} else if (sector_nr < RESERVED_SECTORS + g_fat_sectors) {
-			/* FAT sector */
-			uint32_t entry_nr = (from
-				- RESERVED_SECTORS * SECTOR_SIZE) / 4;
-			maxcopy = min(len, (RESERVED_SECTORS + g_fat_sectors)
-				* SECTOR_SIZE - from);
-			if (from % 4 || maxcopy < 4) {
-				/* deal with unaligned reads */
-				uint32_t fat_entry;
-				fat_fill(&fat_entry, entry_nr, 1);
-				maxcopy = min(maxcopy, 4);
-				memcpy(buf, ((char *)&fat_entry) + from % 4,
-					maxcopy);
-			} else {
-				maxcopy -= maxcopy % 4;
-				fat_fill(buf, entry_nr, maxcopy / 4);
-			}
-		} else if (sector_nr < g_total_sectors) {
-			uint64_t adj = from - (RESERVED_SECTORS + g_fat_sectors)
-				* SECTOR_SIZE;
-			uint32_t data_cluster = (adj / CLUSTER_SIZE)
-				+ RESERVED_FAT_ENTRIES;
-			uint32_t offset = adj % CLUSTER_SIZE;
-			ret = data_fill((char *)buf, len, data_cluster,
-				offset, &maxcopy);
-		} else {
-			/* past end of image */
-			ret = EINVAL;
-		}
-		len -= maxcopy;
-		buf = (char *) buf + maxcopy;
-		from += maxcopy;
-	}
-
-	if (ret && len)
-		memset(buf, 0, len);
-	return ret;
+	return image_fill((char *) buf, from, len);
 }
 
 static void init_boot_sector(const char *label)

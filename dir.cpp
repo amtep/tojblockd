@@ -19,29 +19,42 @@
 #include <errno.h>
 
 #include <algorithm>
+#include <map>
 
 #include "vfat.h"
 #include "fat.h"
+#include "image.h"
 
 #define DIR_ENTRY_SIZE 32
 #define CHARS_PER_DIR_ENTRY 13
 
 /*
- * Information about allocated directories.
  * Directories are allocated from the start of the FAT, but to make
  * the scanning code simpler they don't have to be allocated contiguously
  * the way mapped files are.
  */
-struct dir_info {
-	uint32_t starting_cluster; /* number of first cluster of this dir */
-	uint32_t allocated; /* number of allocated clusters */
-	std::vector<char> data;
+
+class DirService : public DataService {
+public:
+	DirService(const char *path, uint32_t last_cluster)
+		: path(strdup(path)), last_cluster(last_cluster) {}
+	virtual int fill(char *buf, uint32_t length, uint64_t offset);
+	virtual int receive(const char *buf, uint32_t length, uint64_t offset);
+
 	const char *path; /* path in real filesystem */
+	std::vector<char> data;
+	uint32_t last_cluster;
 };
 
-static std::vector<struct dir_info> dir_infos;
-
 static uint32_t unique_name_counter = 1;
+
+/* Map starting clusters to directories */
+/*
+ * TODO: in some sense the image module has this information already.
+ * Should it get an image_get_service lookup function?
+ * Revisit this after rw support is working.
+ */
+std::map<uint32_t, DirService *> dirservices;
 
 static void fill_filename_part(char *data, int seq_nr, bool is_last,
 	const filename_t &filename, uint8_t checksum)
@@ -147,7 +160,7 @@ static void encode_date(uint8_t *buf, time_t stamp)  /* 2-byte buffer */
 void dir_init()
 {
 	unique_name_counter = 1;
-	dir_infos.clear();
+	dirservices.clear();
 	dir_alloc_new("."); /* create empty root directory */
 }
 
@@ -155,14 +168,13 @@ bool dir_add_entry(uint32_t parent_clust, uint32_t entry_clust,
 	const filename_t &filename, uint32_t file_size, uint8_t attrs,
 	time_t mtime, time_t atime)
 {
-	struct dir_info *parent;
+	DirService *parent;
 	int num_entries;
-	uint32_t clusters_needed;
+	uint32_t allocated;
 	int seq_nr;
 	int data_offset;
 	uint8_t checksum;
 	uint8_t short_entry[DIR_ENTRY_SIZE];
-	int dir_index;
 
 	/* special case for the root directory, which is found in cluster 2
 	 * but which must be referred to as cluster 0 in directory entries,
@@ -175,25 +187,24 @@ bool dir_add_entry(uint32_t parent_clust, uint32_t entry_clust,
         if (filename.size() > 256)
 		return false;
 
-	dir_index = fat_dir_index(parent_clust);
-	if (dir_index < 0)
-		return false;
-
-	parent = &dir_infos[dir_index];
+	if (dirservices.count(parent_clust) == 0)
+		return false; /* no such directory */
+	parent = dirservices[parent_clust];
 
 	/* Check if the result will fit in the allocated space */
+	allocated = ALIGN(parent->data.size(), CLUSTER_SIZE);
+	if (allocated == 0)
+		allocated = CLUSTER_SIZE; // even empty dirs get one cluster
 	/* add one entry for the shortname */
 	num_entries = 1 + (filename.size() + CHARS_PER_DIR_ENTRY - 1)
 				/ CHARS_PER_DIR_ENTRY;
-	clusters_needed = ALIGN(parent->data.size()
-		+ num_entries * DIR_ENTRY_SIZE, CLUSTER_SIZE) / CLUSTER_SIZE;
-	if (clusters_needed > parent->allocated) {
-		if (fat_extend(parent->starting_cluster,
-			clusters_needed - parent->allocated)) {
-			parent->allocated = clusters_needed;
-		} else {
+	if (num_entries * DIR_ENTRY_SIZE + parent->data.size() > allocated) {
+		uint32_t new_last = fat_extend_chain(parent->last_cluster);
+		if (new_last == 0)
 			return false;
-		}
+		image_register(parent, fat_cluster_pos(new_last), CLUSTER_SIZE,
+				allocated);
+		parent->last_cluster = new_last;
 	}
 
 	prep_short_entry(short_entry);
@@ -236,30 +247,31 @@ bool dir_add_entry(uint32_t parent_clust, uint32_t entry_clust,
 
 uint32_t dir_alloc_new(const char *path)
 {
-	struct dir_info new_dir;
+	uint32_t starting_cluster = fat_alloc_beginning(1);
+	DirService *service = new DirService(path, starting_cluster);
+	service->ref();
+	dirservices[starting_cluster] = service;
+	image_register(service, fat_cluster_pos(starting_cluster),
+			CLUSTER_SIZE, 0);
 
-	new_dir.starting_cluster = fat_alloc_dir(dir_infos.size());
-	new_dir.allocated = 1;
-	new_dir.path = strdup(path);
-
-	dir_infos.push_back(new_dir);
-
-	return new_dir.starting_cluster;
+	return starting_cluster;
 }
 
-int dir_fill(char *buf, uint32_t len, int dir_index, uint32_t offset)
+int DirService::fill(char *buf, uint32_t length, uint64_t offset)
 {
-        if (dir_index < 0 || dir_index >= (int) dir_infos.size())
-            return EINVAL;
-
-	std::vector<char> *datap = &dir_infos[dir_index].data;
 	uint32_t extra = 0;
-	if (offset + len > datap->size()) {
-		extra = offset + len - datap->size();
-		if (extra > len)
-			extra = len;
+	if (offset + length > data.size()) {
+		extra = offset + length - data.size();
+		if (extra > length)
+			extra = length;
 	}
-	memcpy(buf, &datap->front() + offset, len - extra);
-	memset(buf + len - extra, 0, extra);
+	memcpy(buf, &data.front() + offset, length - extra);
+	memset(buf + length - extra, 0, extra);
+	return 0;
+}
+
+int DirService::receive(const char *buf, uint32_t length, uint64_t offset)
+{
+	// TODO: STUB
 	return 0;
 }

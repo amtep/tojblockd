@@ -25,33 +25,28 @@
 
 #include "vfat.h"
 #include "fat.h"
+#include "image.h"
 
-struct filemap_info {
-	uint32_t starting_cluster;
+class Filemap : public DataService {
+public:
+	Filemap(const char *path) : path(strdup(path)) { }
+	virtual int fill(char *buf, uint32_t length, uint64_t offset);
+	virtual int receive(const char *buf, uint32_t length, uint64_t offset);
+
 	const char *path; /* path in real filesystem */
 };
-
-/* filemaps are kept sorted by descending starting_cluster */
-static std::vector<struct filemap_info> filemaps;
 
 uint32_t filemap_add(const char *name, uint32_t size)
 {
 	uint32_t nr_clust = ALIGN(size, CLUSTER_SIZE) / CLUSTER_SIZE;
-	struct filemap_info fm;
-
-	fm.starting_cluster = fat_alloc_filemap(filemaps.size(), nr_clust);
-	fm.path = strdup(name);
-
-	filemaps.push_back(fm);
-	return fm.starting_cluster;
+	uint32_t starting_cluster = fat_alloc_end(nr_clust);
+	Filemap *service = new Filemap(name);
+	image_register(service, fat_cluster_pos(starting_cluster), size, 0);
+	return starting_cluster;
 }
 
-int filemap_fill(char *buf, uint32_t len, int fmap_index, uint32_t offset)
+int Filemap::fill(char *buf, uint32_t length, uint64_t offset)
 {
-	if (fmap_index < 0 || fmap_index >= (int) filemaps.size())
-		return EINVAL;
-
-	const char *path = filemaps[fmap_index].path;
 	int nread;
 	int fd;
 	int ret = 0;
@@ -60,16 +55,24 @@ int filemap_fill(char *buf, uint32_t len, int fmap_index, uint32_t offset)
 	if (fd < 0)
 		return errno;
 
-	if (lseek(fd, offset, SEEK_SET) == (off_t) -1) {
+	if (offset > 0 && lseek(fd, offset, SEEK_SET) == (off_t) -1) {
 		ret = errno;
 	} else {
-		nread = read(fd, buf, len);
+		nread = read(fd, buf, length);
 		if (nread < 0) {
 			ret = errno;
-		} else if ((uint32_t) nread < len) { // reached end of file
-			memset(buf + nread, 0, len - nread);
+		} else if ((uint32_t) nread < length) { // reached end of file
+			// Btw this should only happen if the file was
+			// truncated after being registered
+			memset(buf + nread, 0, length - nread);
 		}
 	}
 	close(fd);
 	return ret;
+}
+
+int Filemap::receive(const char *buf, uint32_t length, uint64_t offset)
+{
+	// TODO: Accept these writes when in a known consistent state?
+	return EACCES;
 }

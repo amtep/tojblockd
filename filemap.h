@@ -24,9 +24,3 @@ void filemap_init();
 
 /* Register a filemap and return its starting cluster number. */
 uint32_t filemap_add(const char *name, uint32_t size);
-
-/* Fill all or part of 'buf' with data from the mapped file,
- * starting from byte 'offset'. If not all of 'buf' is filled
- * (file is not long enough) then the rest is zeroed.
- * Result: 0 for success or errno for failure. */
-int filemap_fill(char *buf, uint32_t len, int fmap_index, uint32_t offset);
