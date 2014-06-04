@@ -67,7 +67,18 @@ class TestImage : public QObject {
     // and it will be freed by cleanup()
     char *data;
 
+    // testdata is initialized once and is used as a template by
+    // alloc_ro_testdata.
+    char testdata[2 * DATASIZE];
+
 private slots:
+    void initTestCase() {
+        uint16_t counter = 0;
+        for (size_t i = 0; i < sizeof(testdata); i += sizeof(counter)) {
+            * (uint16_t *) &testdata[i] = counter++;
+        }
+    }
+
     void init() {
         data = 0;
         image_init();
@@ -84,10 +95,18 @@ private:
         memset(data, 1, size);
     }
 
-    void alloc_ro_data(size_t size) {
+    void alloc_ro_data(size_t size, char filler = 'x') {
         free_guarded(data);
         data = (char *) alloc_guarded(size);
-        memset(data, 'x', size);
+        memset(data, filler, size);
+        mprotect(data, size, PROT_READ);
+    }
+
+    void alloc_ro_testdata(size_t size) {
+        Q_ASSERT(size <= sizeof(testdata));
+        free_guarded(data);
+        data = (char *) alloc_guarded(size);
+        memcpy(data, testdata, size);
         mprotect(data, size, PROT_READ);
     }
 
@@ -408,7 +427,7 @@ private slots:
 
     // Register a data service, then register another data service
     // partly overlapping it, and check that both are valid in their ranges.
-    void test_overlapping_services() {
+    void test_overlapping_services_1() {
         TestDataService service1;
         TestDataService service2;
         TestDataService::call_info info;
@@ -432,6 +451,35 @@ private slots:
         info = service2.fill_calls.takeFirst();
         COMPARE_POINTERS(info.buf, data + DATASIZE/2);
         QCOMPARE(info.length, (uint32_t) DATASIZE/2);
+        QCOMPARE(info.offset, (uint64_t) 0);
+    }
+
+    // Same as test_overlapping_services, but the later service overlaps
+    // the start of the earlier service instead of the end.
+    void test_overlapping_services_2() {
+        TestDataService service1;
+        TestDataService service2;
+        TestDataService::call_info info;
+
+        image_register(&service1, 1024 + DATASIZE/2, DATASIZE, 0);
+        image_register(&service2, 1024, DATASIZE, 0);
+        QCOMPARE(service1.m_refs, 1);
+        QCOMPARE(service2.m_refs, 1);
+
+        alloc_data(2 * DATASIZE);
+        int ret = image_fill(data, 1024, 2 * DATASIZE);
+        QCOMPARE(ret, 0);
+        VERIFY_ARRAY(data, 0, DATASIZE, (char) 0);
+        QCOMPARE(service1.fill_calls.size(), 1);
+        info = service1.fill_calls.takeFirst();
+        COMPARE_POINTERS(info.buf, data + DATASIZE);
+        QCOMPARE(info.length, (uint32_t) DATASIZE/2);
+        QCOMPARE(info.offset, (uint64_t) DATASIZE/2);
+
+        QCOMPARE(service2.fill_calls.size(), 1);
+        info = service2.fill_calls.takeFirst();
+        COMPARE_POINTERS(info.buf, data);
+        QCOMPARE(info.length, (uint32_t) DATASIZE);
         QCOMPARE(info.offset, (uint64_t) 0);
     }
 
@@ -506,14 +554,14 @@ private slots:
     // Call image_receive on an undefined part of the image
     void test_image_receive_unregistered() {
         // The image should just store the received data and return it on fills
-        alloc_ro_data(DATASIZE);
+        alloc_ro_testdata(DATASIZE);
         int ret = image_receive(data, 1000, DATASIZE);
         QCOMPARE(ret, 0);
 
         alloc_data(DATASIZE);
         ret = image_fill(data, 1000, DATASIZE);
         QCOMPARE(ret, 0);
-        VERIFY_ARRAY(data, 0, DATASIZE, 'x'); // 'x' is from alloc_ro_data
+        COMPARE_ARRAY(data, testdata, DATASIZE);
     }
 
     // Register a data service and then an image_receive on part of its range.
@@ -525,7 +573,7 @@ private slots:
         TestDataService service;
         image_register(&service, 1024, DATASIZE, 0);
 
-        alloc_ro_data(DATASIZE);
+        alloc_ro_testdata(DATASIZE);
         int ret = image_receive(data, 1024 + delta, DATASIZE);
         QCOMPARE(ret, 0);
         QCOMPARE(service.m_refs, 1);
@@ -539,7 +587,7 @@ private slots:
         ret = image_fill(data, 1024, DATASIZE + delta);
         QCOMPARE(ret, 0);
         VERIFY_ARRAY(data, 0, (int) delta, (char) 0);
-        VERIFY_ARRAY(data, (int) delta, DATASIZE + (int) delta, 'x');
+        COMPARE_ARRAY(data + delta, testdata, DATASIZE);
     }
 
     // Register two almost adjacent data services and do an image_receive
@@ -553,7 +601,7 @@ private slots:
         image_register(&service1, 1024, DATASIZE, 0);
         image_register(&service2, 1024 + DATASIZE + spacing, DATASIZE, 0);
 
-        alloc_ro_data(2 * DATASIZE);
+        alloc_ro_data(2 * DATASIZE, 'x');
         int ret = image_receive(data, 1024, 2 * DATASIZE);
         QCOMPARE(ret, 0);
         QCOMPARE(service1.m_refs, 1);
@@ -650,10 +698,98 @@ private slots:
         QCOMPARE(service.fill_calls.size(), 0);
     }
 
+    // Try a series of sometimes overlapping image_receives that together
+    // fill a large block, then read the whole block in one fill.
+    void test_stress_image_receive() {
+        // write blocks in this order, with each image_receive being large
+        // enough to cover that block and the next one.
+        int seq[10] = { 0, 5, 7, 3, 9, 2, 1, 8, 4, 6 };
+
+        for (int i = 0; i < 10; i++) {
+            alloc_ro_data(DATASIZE * 2, '0' + seq[i]);
+            int ret = image_receive(data, seq[i] * DATASIZE, DATASIZE * 2);
+            QCOMPARE(ret, 0);
+        }
+
+        // Fill a bit more than the block, to verify that the data after it is
+        // blank.
+        alloc_data(12 * DATASIZE);
+        int ret = image_fill(data, 0, 12 * DATASIZE);
+        QCOMPARE(ret, 0);
+        VERIFY_ARRAY(data, 0 * DATASIZE, 1 * DATASIZE, '0');
+        VERIFY_ARRAY(data, 1 * DATASIZE, 2 * DATASIZE, '1');
+        VERIFY_ARRAY(data, 2 * DATASIZE, 3 * DATASIZE, '1');
+        VERIFY_ARRAY(data, 3 * DATASIZE, 4 * DATASIZE, '2');
+        VERIFY_ARRAY(data, 4 * DATASIZE, 5 * DATASIZE, '4');
+        VERIFY_ARRAY(data, 5 * DATASIZE, 6 * DATASIZE, '4');
+        VERIFY_ARRAY(data, 6 * DATASIZE, 7 * DATASIZE, '6');
+        VERIFY_ARRAY(data, 7 * DATASIZE, 8 * DATASIZE, '6');
+        VERIFY_ARRAY(data, 8 * DATASIZE, 9 * DATASIZE, '8');
+        VERIFY_ARRAY(data, 9 * DATASIZE, 10 * DATASIZE, '8');
+        VERIFY_ARRAY(data, 10 * DATASIZE, 11 * DATASIZE, '9');
+        VERIFY_ARRAY(data, 11 * DATASIZE, 12 * DATASIZE, (char) 0);
+    }
+
+    // Register a series of sometimes overlapping services that together
+    // fill a large block, then read the whole block in one fill.
+    void test_stress_image_register() {
+        // register blocks in this order, with each service being large
+        // enough to cover that block and the next one.
+        int seq[10] = { 0, 5, 7, 3, 9, 2, 1, 8, 4, 6 };
+        TestDataService services[10];
+        // These are counted in blocks
+        int expect_length[10] = { 1, 2, 1, 0, 2, 0, 2, 0, 2, 1 };
+        int expect_offset[10] = { 0, 0, 1, 0, 0, 0, 0, 0, 0, 1 };
+
+        for (int i = 0; i < 10; i++) {
+            image_register(&services[seq[i]], seq[i] * DATASIZE, DATASIZE * 2, 0);
+        }
+
+        alloc_data(12 * DATASIZE);
+        int ret = image_fill(data, 0, 12 * DATASIZE);
+        QCOMPARE(ret, 0);
+        VERIFY_ARRAY(data, 0, 12 * DATASIZE, (char) 0);
+
+        for (int i = 0; i < 10; i++) {
+            TestDataService::call_info info;
+            if (expect_length[i] > 0) {
+                QCOMPARE(services[i].fill_calls.size(), 1);
+                info = services[i].fill_calls.takeFirst();
+                COMPARE_POINTERS(info.buf,
+                        data + i * DATASIZE + expect_offset[i] * DATASIZE);
+                QCOMPARE(info.length, (uint32_t) (expect_length[i] * DATASIZE));
+                QCOMPARE(info.offset, (uint64_t) (expect_offset[i] * DATASIZE));
+            } else {
+                QCOMPARE(services[i].fill_calls.size(), 0);
+            }
+        }
+    }
+
+    // Try an image_fill over a mix of registered services and overlapping
+    // received data.
+    void test_stress_image_fill() {
+        int pos = 0;
+        for (int i = 1; i <= 10; pos += i, i++) {
+            image_register(new TestDataService(), pos, i, 0);
+        }
+
+        int rpos = pos;
+        alloc_ro_testdata(pos);
+        for (int i = 1; i <= 10; rpos -= i, i++) {
+            image_receive(data + rpos - i, rpos - i, i);
+        }
+
+        alloc_data(pos + 1);
+        int ret = image_fill(data, 0, pos + 1);
+        QCOMPARE(ret, 0);
+        COMPARE_ARRAY(data, testdata, pos);
+        QCOMPARE(data[pos], (char) 0);
+    }
+
     // Do an image_receive on an undefined part of the image,
     // then image_clear_data and check that it now returns zeroes
     void test_clear_received() {
-        alloc_ro_data(DATASIZE);
+        alloc_ro_testdata(DATASIZE);
         int ret = image_receive(data, 1024, DATASIZE);
         QCOMPARE(ret, 0);
 
@@ -662,7 +798,7 @@ private slots:
         alloc_data(DATASIZE);
         ret = image_fill(data, 1024, DATASIZE);
         QCOMPARE(ret, 0);
-        VERIFY_ARRAY(data, 0, DATASIZE/2, 'x');
+        COMPARE_ARRAY(data, testdata, DATASIZE/2);
         VERIFY_ARRAY(data, DATASIZE/2, DATASIZE, (char) 0);
     }
 
@@ -719,7 +855,7 @@ private slots:
 
         image_register(&service, 1024, DATASIZE, 0);
 
-        alloc_ro_data(DATASIZE);
+        alloc_ro_testdata(DATASIZE);
         int ret = image_receive(data, 1024, DATASIZE);
         QCOMPARE(ret, 0);
 
@@ -729,7 +865,7 @@ private slots:
         alloc_data(DATASIZE);
         ret = image_fill(data, 1024, DATASIZE);
         QCOMPARE(ret, 0);
-        VERIFY_ARRAY(data, 0, DATASIZE, 'x'); // 'x' is from image_receive
+        COMPARE_ARRAY(data, testdata, DATASIZE);
         QCOMPARE(service.fill_calls.size(), 0);
     }
 
