@@ -156,7 +156,7 @@ int image_fill(char *buf, uint64_t start, uint32_t length)
 			if (d_it->first <= pos) {
 				assert(pos - d_it->first <= 0xffffffff);
 				uint32_t copy_off = pos - d_it->first;
-				uint32_t fill_len = min(d_it->second.size() - copy_off, max_len);
+				uint32_t fill_len = min(d_it->second.size() - copy_off, (size_t) max_len);
 				memcpy(fill_at, &d_it->second.front() + copy_off,
 						fill_len);
 				filled += fill_len;
