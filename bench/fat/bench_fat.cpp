@@ -84,6 +84,23 @@ private slots:
         QTest::newRow("1k") << 1000;
         QTest::newRow("100k") << 100000;
     }
+
+    void test_extend_two() {
+        QFETCH(int, count);
+        uint32_t clust1 = fat_alloc_beginning(1);
+        uint32_t clust2 = fat_alloc_beginning(1);
+        QBENCHMARK {
+            for (int i = 0; i < count; i++) {
+                clust1 = fat_extend_chain(clust1);
+                clust2 = fat_extend_chain(clust2);
+            }
+            fat_finalize(DATA_CLUSTERS);
+        }
+    }
+
+    void test_extend_two_data() {
+        test_extend_data();
+    }
 };
 
 QTEST_APPLESS_MAIN(BenchFat)
