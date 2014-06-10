@@ -49,7 +49,7 @@ covhtml: coverage
 
 bench: bench/Makefile
 	cd bench && $(MAKE)
-	bench/fat/bench-fat -tickcounter
+	bench/fat/bench-fat
 
 bench/Makefile:
 	cd bench && qmake

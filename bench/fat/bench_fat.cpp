@@ -77,7 +77,6 @@ private slots:
             }
             fat_finalize(DATA_CLUSTERS);
         }
-        QCOMPARE(clust, (uint32_t) count + 2);
     }
 
     void test_extend_data() {
