@@ -15,13 +15,19 @@
 
 #include "fat.h"
 
-#include <errno.h>
-
-#include <sys/mman.h>
-
 #include <QtTest/QtTest>
 
 #include "image.h"
+
+/*
+ * Most of these measurements are done with one thousand operations
+ * and again with one hundred thousand operations, rather than
+ * relying on QBENCHMARK to decide on its own. The reason is to
+ * check that the cost per operation is approximately linear.
+ *
+ * One hundred thousand is the target for the number of user files
+ * to support.
+ */
 
 class BenchFat : public QObject {
     Q_OBJECT
@@ -80,9 +86,12 @@ private slots:
     }
 
     void test_extend_data() {
+        // Since fat_extend_chain is mainly used for growing directories,
+        // the amounts are scaled for a hundred thousand files at
+        // approximately 50 file entries per directory cluster.
         QTest::addColumn<int>("count");
-        QTest::newRow("1k") << 1000;
-        QTest::newRow("100k") << 100000;
+        QTest::newRow("20") << 200;
+        QTest::newRow("2000") << 2000;
     }
 
     void test_extend_two() {
