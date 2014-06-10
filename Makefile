@@ -22,6 +22,7 @@ tojblockd: tojblockd.o vfat.o import/ConvertUTF.o import/sd_notify.o fat.o dir.o
 clean:
 	rm -f tojblockd *.o import/*.o
 	if [ -e tests/Makefile ]; then cd tests && $(MAKE) distclean; fi
+	if [ -e bench/Makefile ]; then cd bench && $(MAKE) distclean; fi
 	rm -f tests/*.info tests/*/*.gcda tests/*/*.gcno tests/*/*.info
 	rm -rf covhtml
 
