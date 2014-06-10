@@ -116,8 +116,8 @@ private slots:
         QCOMPARE(clust_nr1, (uint32_t) 2);
         QCOMPARE(clust_nr2, (uint32_t) 3);
 
-        bool ret = fat_extend_chain(clust_nr1);
-        QCOMPARE(ret, true);
+        uint32_t ret = fat_extend_chain(clust_nr1);
+        QCOMPARE(ret, clust_nr2 + 1);
 
         fat_finalize(DATA_CLUSTERS);
 
@@ -139,10 +139,10 @@ private slots:
         QCOMPARE(clust_nr1, (uint32_t) 2);
         QCOMPARE(clust_nr2, (uint32_t) 3);
 
-        bool ret1 = fat_extend_chain(clust_nr1);
-        QCOMPARE(ret1, true);
-        bool ret2 = fat_extend_chain(clust_nr1);
-        QCOMPARE(ret2, true);
+        uint32_t ret1 = fat_extend_chain(clust_nr1);
+        QCOMPARE(ret1, clust_nr2 + 1);
+        uint32_t ret2 = fat_extend_chain(clust_nr1);
+        QCOMPARE(ret2, ret1 + 1);
 
         fat_finalize(DATA_CLUSTERS);
 
