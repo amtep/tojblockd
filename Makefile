@@ -17,7 +17,7 @@ import/sd_notify.o: import/sd_notify.h
 tojblockd: tojblockd.o vfat.o import/ConvertUTF.o import/sd_notify.o fat.o dir.o filemap.o image.o
 	$(CXX) $^ -o $@
 
-.PHONY: clean tests check coverage
+.PHONY: clean tests check coverage bench
 
 clean:
 	rm -f tojblockd *.o import/*.o
@@ -46,3 +46,10 @@ coverage: tests
 
 covhtml: coverage
 	genhtml -o covhtml --demangle-cpp tests/*.info
+
+bench: bench/Makefile
+	cd bench && $(MAKE)
+	bench/fat/bench-fat -tickcounter
+
+bench/Makefile:
+	cd bench && qmake

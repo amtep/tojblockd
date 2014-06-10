@@ -3,6 +3,9 @@ tojblockd
 tests/Makefile
 tests/*/Makefile
 tests/*/test-*
+bench/Makefile
+bench/*/Makefile
+bench/*/bench-*
 *.moc
 *.gcda
 *.gcno
