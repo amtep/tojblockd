@@ -56,6 +56,13 @@ static const struct fat_extent entry_1 = {
 	1, 1, FAT_END_OF_CHAIN, 0, 0, EXTENT_LITERAL
 };
 
+/* Just calling vec.clear() does not release the allocated memory. */
+template <typename T>
+static void clear_vector(std::vector<T> & vec)
+{
+	std::vector<T>().swap(vec);
+}
+
 /*
  * During the construction stage, this contains the two dummy
  * entries and the directories. During finalization, the free
@@ -77,10 +84,10 @@ void fat_init(uint32_t data_clusters)
 	g_data_clusters = data_clusters;
 	g_fat_size = ALIGN((g_data_clusters + RESERVED_FAT_ENTRIES) * 4,
 			SECTOR_SIZE);
-	extents.clear();
+	clear_vector(extents);
 	extents.push_back(entry_0);
 	extents.push_back(entry_1);
-	extents_from_end.clear();
+	clear_vector(extents_from_end);
 }
 
 /* This function is only valid during construction stage */
@@ -370,7 +377,7 @@ void fat_finalize(uint32_t max_free_clusters)
 	for (int i = (int) extents_from_end.size() - 1; i >= 0; i--, pos++)
 		extents[pos] = extents_from_end[i];
 
-	extents_from_end.clear();
+	clear_vector(extents_from_end);
 
 	image_register(&fatservice, RESERVED_SECTORS * SECTOR_SIZE,
 			g_fat_size, 0);
