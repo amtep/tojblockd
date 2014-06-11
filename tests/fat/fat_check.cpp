@@ -57,7 +57,7 @@ const char *fat_check_invariants(void)
 				fe->starting_cluster);
 			return errmsg;
 		}
-		if (fe->extent_type != EXTENT_LITERAL
+		if (!is_literal(fe)
 			&& (fe->next == FAT_UNALLOCATED
 			    || fe->next == FAT_BAD_CLUSTER)) {
 			sprintf(errmsg,
