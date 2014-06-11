@@ -148,14 +148,9 @@ class FatDataService : public DataService {
  * Split or reuse an extent so that a new single-cluster extent is
  * created for cluster_nr. Return the number of that extent.
  */
-// TODO: record that the chain is damaged?
-static int punch_extent(uint32_t cluster_nr, uint32_t value)
+static void punch_extent(int extent_nr, uint32_t cluster_nr, uint32_t value)
 {
 	struct fat_extent new_ext;
-	int extent_nr = find_extent(cluster_nr);
-	if (extent_nr < 0)
-		return -1;
-
 	new_ext.starting_cluster = cluster_nr;
 	new_ext.ending_cluster = cluster_nr;
 	new_ext.next = value;
@@ -168,36 +163,38 @@ static int punch_extent(uint32_t cluster_nr, uint32_t value)
 	struct fat_extent *fe = &extents[extent_nr];
 	if (fe->starting_cluster == fe->ending_cluster) {
 		*fe = new_ext; // re-use
-		return extent_nr;
+		return;
 	}
-
 	if (fe->starting_cluster == cluster_nr) {
 		fe->starting_cluster++;
 		extents.insert(extents.begin() + extent_nr, new_ext);
-		return extent_nr;
-	} else if (fe->ending_cluster == cluster_nr) {
+		return;
+	}
+	if (fe->ending_cluster == cluster_nr) {
 		fe->ending_cluster--;
 		if (!is_literal(fe))
 			fe->next = cluster_nr; // preserve old value
 		extents.insert(extents.begin() + extent_nr + 1, new_ext);
-		return extent_nr + 1;
-	} else {
-		// the extent has to be split in two pieces
-		struct fat_extent post_ext;
-		post_ext.starting_cluster = cluster_nr + 1;
-		post_ext.ending_cluster = fe->ending_cluster;
-		post_ext.next = fe->next;
-		post_ext.prev = fe->prev; // chain is now bad
-		fe->ending_cluster = cluster_nr - 1;
-		if (!is_literal(fe))
-			fe->next = cluster_nr; // preserve old value
-		// Because of the vector implementation it's more
-		// efficient to insert two elements and then fix up
-		// one of them, than to do two inserts.
-		extents.insert(extents.begin() + extent_nr + 1, 2, post_ext);
-		extents[extent_nr + 1] = new_ext;
-		return extent_nr + 1;
+		return;
 	}
+
+	// the extent has to be split in two pieces
+	struct fat_extent post_ext;
+	post_ext.starting_cluster = cluster_nr + 1;
+	post_ext.ending_cluster = fe->ending_cluster;
+	post_ext.next = fe->next;
+	post_ext.prev = fe->prev;
+	fe->ending_cluster = cluster_nr - 1;
+	if (!is_literal(fe)) {
+		fe->next = cluster_nr; // preserve old value
+		post_ext.prev = FAT_END_OF_CHAIN; // chain is broken
+	}
+	// Because of the vector implementation it's more
+	// efficient to insert two elements and then fix up
+	// one of them, than to do two inserts.
+	extents.insert(extents.begin() + extent_nr + 1, 2, post_ext);
+	extents[extent_nr + 1] = new_ext;
+	return;
 }
 
 /* Try to add an entry to an extent.
@@ -216,8 +213,8 @@ static bool try_inc_extent(int extent_nr, uint32_t value)
 		return false;
 	}
 
-	/* All other extents are chains, which can be extended if the
-	 * next pointer was pointing at the following entry anyway.
+	/* Chains can be extended if the next pointer was pointing at
+	 * the following entry anyway.
 	 * (This won't happen in a properly constructed FAT, but can
 	 * easily happen while processing newly allocated chains.) */
 	if (fe->next == fe->ending_cluster + 1 && valid_chain_value(value)) {
@@ -238,6 +235,12 @@ static void bump_extent(int extent_nr)
 		extents.erase(extents.begin() + extent_nr);
 	} else {
 		fe->starting_cluster++;
+		if (!is_literal(fe)) {
+			// The entry pointed to by fe->prev no longer points
+			// back to fe->starting_cluster, so mark the chain
+			// as broken
+			fe->prev = FAT_END_OF_CHAIN;
+		}
 	}
 }
 
@@ -456,11 +459,59 @@ int FatDataService::receive(const char *cbuf, uint32_t length, uint64_t offset)
 		}
 		/* split off a new extent for this entry, and record
 		 * it as a single-cluster chain */
-		extent_nr = punch_extent(entry_nr + i, value);
+		punch_extent(extent_nr, entry_nr + i, value);
 	}
 
 	free(orig);
 	return 0;
+}
+
+/* Note: this function has side effects on the prev pointers.
+ * It adjusts the FAT_END_OF_CHAIN ones if it finds corresponding
+ * next pointers. This is invisible to users of the API but should
+ * be kept in mind inside this file. */
+// TODO: only check extents that may have been affected by writes
+bool fat_is_consistent(void)
+{
+	/* Requirements:
+	 * No two entries point at the same next entry
+	 * All entries in a chain point at valid chain values
+	 */
+
+	/*
+	 * The prev values are not exhaustively checked.
+	 * As long as each next value points to an extent whose
+	 * prev value points back to it, it's ok.
+	 * This might leave some prev values pointing at extents
+	 * that don't point back to them, but since that has no
+	 * effect on the actual FAT contents we'll ignore it.
+	 */
+	for (int i = extents.size() - 1; i >= 0; i--) {
+		struct fat_extent *fe = &extents[i];
+		if (is_literal(fe))
+			continue;
+		if (fe->next == FAT_END_OF_CHAIN)
+			continue;
+
+		if (!valid_chain_value(fe->next))
+			return false;
+		int next_nr = find_extent(fe->next);
+		if (next_nr < 0)
+			return false;
+		struct fat_extent *nfe = &extents[next_nr];
+		if (is_literal(nfe))
+			return false;
+		if (fe->next != nfe->starting_cluster)
+			return false;
+		// It's ok if nfe's prev does not point to anything; just
+		// claim it now. But if it already points to another extent
+		// then there is a conflict.
+		if (nfe->prev == FAT_END_OF_CHAIN)
+			nfe->prev = fe->ending_cluster;
+		else if (nfe->prev != fe->ending_cluster)
+			return false;
+	}
+	return true;
 }
 
 #ifdef TESTING

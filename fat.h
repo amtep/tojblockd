@@ -73,3 +73,7 @@ uint32_t fat_extend_chain(uint32_t cluster_nr);
 
 /* Transition from construction stage to full service. */
 void fat_finalize(uint32_t max_free_clusters);
+
+/* Return true iff every chain in the FAT has a unique starting point
+ * and terminates in an END_OF_CHAIN */
+bool fat_is_consistent(void);

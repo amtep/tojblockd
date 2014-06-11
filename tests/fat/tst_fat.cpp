@@ -225,6 +225,83 @@ private slots:
         QCOMPARE(fat_cluster_pos(2), fat_end);
         QCOMPARE(fat_cluster_pos(3), fat_end + CLUSTER_SIZE);
     }
+
+    // Try a fat_receive that extends the root dir by one cluster
+    void test_write_extend_root() {
+        // Create the root dir
+        uint32_t rootclust = fat_alloc_beginning(1);
+        QCOMPARE(rootclust, (uint32_t) 2);
+
+        fat_finalize(DATA_CLUSTERS);
+
+        // Verify initial state
+        image_fill((char *) fatbuf, FAT_START, CLUSTER_SIZE);
+        QCOMPARE(fatbuf[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(fatbuf[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatbuf[2], (uint32_t) 0x0fffffff); // root dir end of chain
+
+        // Extend the root dir by one cluster
+        fatbuf[3] = fatbuf[2];
+        fatbuf[2] = 3;
+
+        mprotect(fatbuf, CLUSTER_SIZE, PROT_READ);
+        int ret = image_receive((char *) fatbuf, FAT_START, CLUSTER_SIZE);
+        mprotect(fatbuf, CLUSTER_SIZE, PROT_READ | PROT_WRITE);
+        QCOMPARE(ret, 0);
+
+        QCOMPARE(fat_check_invariants(), (char *) 0);
+        QVERIFY(fat_is_consistent());
+        QCOMPARE(fat_check_invariants(), (char *) 0);
+
+        // Check that reading the FAT back shows the changes
+        image_clear_data(FAT_START, CLUSTER_SIZE);
+        uint32_t *newfat = (uint32_t *) alloc_guarded(CLUSTER_SIZE);
+        memset((char *) newfat, 1, CLUSTER_SIZE);
+        image_fill((char *) newfat, FAT_START, CLUSTER_SIZE);
+        COMPARE_ARRAY(fatbuf, newfat, FAT_CLUSTER);
+        free_guarded(newfat);
+    }
+
+    // Try a fat_receive that extends the root dir by one cluster,
+    // with another directory in between
+    void test_write_extend_multipart() {
+        // Create the directories
+        uint32_t rootclust = fat_alloc_beginning(1);
+        QCOMPARE(rootclust, (uint32_t) 2);
+        uint32_t subdirclust = fat_alloc_beginning(1);
+        QCOMPARE(subdirclust, (uint32_t) 3);
+
+        fat_finalize(DATA_CLUSTERS);
+
+        // Verify initial state
+        image_fill((char *) fatbuf, FAT_START, CLUSTER_SIZE);
+        QCOMPARE(fatbuf[0], (uint32_t) 0x0ffffff8); // media byte marker
+        QCOMPARE(fatbuf[1], (uint32_t) 0x0fffffff); // end of chain marker
+        QCOMPARE(fatbuf[2], (uint32_t) 0x0fffffff); // root dir end of chain
+        QCOMPARE(fatbuf[3], (uint32_t) 0x0fffffff); // subdir end of chain
+
+        // Extend the root dir by one cluster, skipping cluster 3
+        fatbuf[4] = fatbuf[2];
+        fatbuf[2] = 4;
+
+        mprotect(fatbuf, CLUSTER_SIZE, PROT_READ);
+        int ret = image_receive((char *) fatbuf, FAT_START, CLUSTER_SIZE);
+        mprotect(fatbuf, CLUSTER_SIZE, PROT_READ | PROT_WRITE);
+        QCOMPARE(ret, 0);
+
+        QCOMPARE(fat_check_invariants(), (char *) 0);
+        QVERIFY(fat_is_consistent());
+        QCOMPARE(fat_check_invariants(), (char *) 0);
+
+        // Check that reading the FAT back shows the changes
+        image_clear_data(FAT_START, CLUSTER_SIZE);
+        uint32_t *newfat = (uint32_t *) alloc_guarded(CLUSTER_SIZE);
+        memset((char *) newfat, 1, CLUSTER_SIZE);
+        image_fill((char *) newfat, FAT_START, CLUSTER_SIZE);
+        COMPARE_ARRAY(fatbuf, newfat, FAT_CLUSTER);
+        free_guarded(newfat);
+    }
+
 };
 
 QTEST_APPLESS_MAIN(TestFat)
