@@ -15,6 +15,10 @@
 
 #include "fat.h"
 
+#include <malloc.h>
+
+#include <QFile>
+
 #include <QtTest/QtTest>
 
 #include "image.h"
@@ -109,6 +113,27 @@ private slots:
 
     void test_extend_two_data() {
         test_extend_data();
+    }
+
+    void test_memuse_per_file() {
+        struct mallinfo info_pre;
+        struct mallinfo info_post;
+
+        malloc_trim(0);
+        fat_alloc_end(40); // don't include constant overhead in the stats
+
+        info_pre = mallinfo();
+
+        for (int i = 0; i < 100000; i++) {
+            fat_alloc_end(40);
+        }
+        fat_finalize(DATA_CLUSTERS);
+
+        info_post = mallinfo();
+
+        qreal bytes_per = (info_post.hblkhd + info_post.uordblks
+                - info_pre.hblkhd - info_pre.uordblks) / 100000.0;
+        QTest::setBenchmarkResult(bytes_per, QTest::BytesAllocated);
     }
 };
 
