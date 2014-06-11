@@ -36,7 +36,6 @@ struct fat_extent {
 	uint32_t starting_cluster;
 	uint32_t ending_cluster;
 	uint32_t index;  /* index to file or dir table, or literal value */
-	uint32_t offset; /* byte offset of starting_cluster in file or dir */
 	uint32_t next;   /* cluster of next extent, or end-of-chain */
 	uint8_t extent_type; /* EXTENT_ values */
 };
@@ -49,11 +48,11 @@ enum {
 /* entry 0 contains the media descriptor in its low byte,
  * should be the same as in the boot sector. */
 static const struct fat_extent entry_0 = {
-	0, 0, 0x0ffffff8, 0, 0, EXTENT_LITERAL
+	0, 0, 0x0ffffff8, 0, EXTENT_LITERAL
 };
 /* entry 1 contains the end-of-chain marker */
 static const struct fat_extent entry_1 = {
-	1, 1, FAT_END_OF_CHAIN, 0, 0, EXTENT_LITERAL
+	1, 1, FAT_END_OF_CHAIN, 0, EXTENT_LITERAL
 };
 
 /* Just calling vec.clear() does not release the allocated memory. */
@@ -145,7 +144,6 @@ static int punch_extent(uint32_t cluster_nr, uint32_t value)
 
 	new_ext.starting_cluster = cluster_nr;
 	new_ext.ending_cluster = cluster_nr;
-	new_ext.offset = 0;
 	if (value == FAT_UNALLOCATED || value == FAT_BAD_CLUSTER) {
 		new_ext.extent_type = EXTENT_LITERAL;
 		new_ext.index = value;
@@ -164,8 +162,6 @@ static int punch_extent(uint32_t cluster_nr, uint32_t value)
 
 	if (fe->starting_cluster == cluster_nr) {
 		fe->starting_cluster++;
-		if (fe->extent_type != EXTENT_LITERAL)
-			fe->offset += CLUSTER_SIZE;
 		extents.insert(extents.begin() + extent_nr, new_ext);
 		return extent_nr;
 	} else if (fe->ending_cluster == cluster_nr) {
@@ -180,8 +176,6 @@ static int punch_extent(uint32_t cluster_nr, uint32_t value)
 		post_ext.starting_cluster = cluster_nr + 1;
 		post_ext.ending_cluster = fe->ending_cluster;
 		post_ext.index = fe->index;
-		post_ext.offset = fe->offset + CLUSTER_SIZE
-			* (cluster_nr + 1 - fe->starting_cluster);
 		post_ext.next = fe->next;
 		post_ext.extent_type = fe->extent_type;
 		fe->ending_cluster = cluster_nr - 1;
@@ -233,11 +227,8 @@ static void bump_extent(int extent_nr)
 
 	if (fe->starting_cluster == fe->ending_cluster) {
 		extents.erase(extents.begin() + extent_nr);
-	} else if (fe->extent_type == EXTENT_LITERAL) {
-		fe->starting_cluster++;
 	} else {
 		fe->starting_cluster++;
-		fe->offset += CLUSTER_SIZE;
 	}
 }
 
@@ -278,7 +269,6 @@ uint32_t fat_alloc_beginning(uint32_t clusters)
 	new_extent.starting_cluster = first_free_cluster();
 	new_extent.ending_cluster = new_extent.starting_cluster + clusters - 1;
 	new_extent.index = 0;
-	new_extent.offset = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = EXTENT_UNKNOWN;
 
@@ -294,7 +284,6 @@ uint32_t fat_alloc_end(uint32_t clusters)
 	new_extent.ending_cluster = last_free_cluster();
 	new_extent.starting_cluster = new_extent.ending_cluster - clusters + 1;
 	new_extent.index = 0;
-	new_extent.offset = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = EXTENT_UNKNOWN;
 
@@ -329,8 +318,6 @@ uint32_t fat_extend_chain(uint32_t cluster_nr)
 	new_extent.starting_cluster = first_free_cluster();
 	new_extent.ending_cluster = new_extent.starting_cluster;
 	new_extent.index = fe->index;
-	new_extent.offset = fe->offset +
-		(fe->ending_cluster - fe->starting_cluster + 1) * CLUSTER_SIZE;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = fe->extent_type;
 	fe->next = new_extent.starting_cluster;
@@ -355,7 +342,6 @@ void fat_finalize(uint32_t max_free_clusters)
 	fe_free.ending_cluster = std::min(last_free_cluster(),
 		first_free_cluster() + max_free_clusters - 1);
 	fe_free.index = FAT_UNALLOCATED;
-	fe_free.offset = 0;
 	fe_free.next = fe_free.index;
 	fe_free.extent_type = EXTENT_LITERAL;
 
@@ -365,7 +351,6 @@ void fat_finalize(uint32_t max_free_clusters)
 	fe_bad.starting_cluster = fe_free.ending_cluster + 1;
 	fe_bad.ending_cluster = last_free_cluster();
 	fe_bad.index = FAT_BAD_CLUSTER;
-	fe_bad.offset = 0;
 	fe_bad.next = fe_bad.index;
 	fe_bad.extent_type = EXTENT_LITERAL;
 
