@@ -92,6 +92,17 @@ void fat_init(uint32_t data_clusters)
 	clear_vector(extents_from_end);
 }
 
+static bool valid_chain_value(uint32_t value)
+{
+	if (value == FAT_END_OF_CHAIN)
+		return true;
+	if (value < RESERVED_FAT_ENTRIES)
+		return false;
+	if (value >= g_data_clusters + RESERVED_FAT_ENTRIES)
+		return false;
+	return true;
+}
+
 /* This function is only valid during construction stage */
 static uint32_t first_free_cluster()
 {
@@ -209,7 +220,7 @@ static bool try_inc_extent(int extent_nr, uint32_t value)
 	 * next pointer was pointing at the following entry anyway.
 	 * (This won't happen in a properly constructed FAT, but can
 	 * easily happen while processing newly allocated chains.) */
-	if (fe->next == fe->ending_cluster + 1) {
+	if (fe->next == fe->ending_cluster + 1 && valid_chain_value(value)) {
 		fe->next = value;
 		fe->ending_cluster++;
 		return true;
@@ -242,9 +253,7 @@ static bool try_renext_extent(int extent_nr, uint32_t value)
 	if (is_literal(fe))
 		return false;
 
-	if (value == FAT_END_OF_CHAIN
-		|| (value > RESERVED_FAT_ENTRIES
-			&& value < g_data_clusters + RESERVED_FAT_ENTRIES)) {
+	if (valid_chain_value(value)) {
 		fe->next = value;
 		return true;
 	}
