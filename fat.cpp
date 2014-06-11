@@ -35,24 +35,25 @@
 struct fat_extent {
 	uint32_t starting_cluster;
 	uint32_t ending_cluster;
-	uint32_t index;  /* index to file or dir table, or literal value */
-	uint32_t next;   /* cluster of next extent, or end-of-chain */
+	/* cluster of next extent, or end-of-chain,
+	 * or literal value if EXTENT_LITERAL */
+	uint32_t next;
 	uint8_t extent_type; /* EXTENT_ values */
 };
 
 enum {
-	EXTENT_LITERAL = 0, /* "index" is literal value ("next" not used) */
+	EXTENT_LITERAL = 0, /* "next" is literal value */
 	EXTENT_UNKNOWN = 1, /* unclassified chain written to our image */
 };
 
 /* entry 0 contains the media descriptor in its low byte,
  * should be the same as in the boot sector. */
 static const struct fat_extent entry_0 = {
-	0, 0, 0x0ffffff8, 0, EXTENT_LITERAL
+	0, 0, 0x0ffffff8, EXTENT_LITERAL
 };
 /* entry 1 contains the end-of-chain marker */
 static const struct fat_extent entry_1 = {
-	1, 1, FAT_END_OF_CHAIN, 0, EXTENT_LITERAL
+	1, 1, FAT_END_OF_CHAIN, EXTENT_LITERAL
 };
 
 /* Just calling vec.clear() does not release the allocated memory. */
@@ -144,14 +145,11 @@ static int punch_extent(uint32_t cluster_nr, uint32_t value)
 
 	new_ext.starting_cluster = cluster_nr;
 	new_ext.ending_cluster = cluster_nr;
+	new_ext.next = value;
 	if (value == FAT_UNALLOCATED || value == FAT_BAD_CLUSTER) {
 		new_ext.extent_type = EXTENT_LITERAL;
-		new_ext.index = value;
-		new_ext.next = 0;
 	} else {
 		new_ext.extent_type = EXTENT_UNKNOWN;
-		new_ext.index = 0;
-		new_ext.next = value;
 	}
 
 	struct fat_extent *fe = &extents[extent_nr];
@@ -175,7 +173,6 @@ static int punch_extent(uint32_t cluster_nr, uint32_t value)
 		struct fat_extent post_ext;
 		post_ext.starting_cluster = cluster_nr + 1;
 		post_ext.ending_cluster = fe->ending_cluster;
-		post_ext.index = fe->index;
 		post_ext.next = fe->next;
 		post_ext.extent_type = fe->extent_type;
 		fe->ending_cluster = cluster_nr - 1;
@@ -199,7 +196,7 @@ static bool try_inc_extent(int extent_nr, uint32_t value)
 
 	/* Literal extents can be extended with an entry of the same value */
 	if (fe->extent_type == EXTENT_LITERAL) {
-		if (fe->index == value) {
+		if (fe->next == value) {
 			fe->ending_cluster++;
 			return true;
 		}
@@ -268,7 +265,6 @@ uint32_t fat_alloc_beginning(uint32_t clusters)
 
 	new_extent.starting_cluster = first_free_cluster();
 	new_extent.ending_cluster = new_extent.starting_cluster + clusters - 1;
-	new_extent.index = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = EXTENT_UNKNOWN;
 
@@ -283,7 +279,6 @@ uint32_t fat_alloc_end(uint32_t clusters)
 
 	new_extent.ending_cluster = last_free_cluster();
 	new_extent.starting_cluster = new_extent.ending_cluster - clusters + 1;
-	new_extent.index = 0;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = EXTENT_UNKNOWN;
 
@@ -317,7 +312,6 @@ uint32_t fat_extend_chain(uint32_t cluster_nr)
 
 	new_extent.starting_cluster = first_free_cluster();
 	new_extent.ending_cluster = new_extent.starting_cluster;
-	new_extent.index = fe->index;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.extent_type = fe->extent_type;
 	fe->next = new_extent.starting_cluster;
@@ -341,8 +335,7 @@ void fat_finalize(uint32_t max_free_clusters)
 	fe_free.starting_cluster = first_free_cluster();
 	fe_free.ending_cluster = std::min(last_free_cluster(),
 		first_free_cluster() + max_free_clusters - 1);
-	fe_free.index = FAT_UNALLOCATED;
-	fe_free.next = fe_free.index;
+	fe_free.next = FAT_UNALLOCATED;
 	fe_free.extent_type = EXTENT_LITERAL;
 
 	if (fe_free.ending_cluster >= fe_free.starting_cluster)
@@ -350,8 +343,7 @@ void fat_finalize(uint32_t max_free_clusters)
 
 	fe_bad.starting_cluster = fe_free.ending_cluster + 1;
 	fe_bad.ending_cluster = last_free_cluster();
-	fe_bad.index = FAT_BAD_CLUSTER;
-	fe_bad.next = fe_bad.index;
+	fe_bad.next = FAT_BAD_CLUSTER;
 	fe_bad.extent_type = EXTENT_LITERAL;
 
 	if (fe_bad.ending_cluster >= fe_bad.starting_cluster)
@@ -384,7 +376,7 @@ int FatDataService::fill(char *cbuf, uint32_t length, uint64_t offset)
 		if (fe->extent_type == EXTENT_LITERAL) {
 			while (entry_nr + i <= fe->ending_cluster
 			       && i < entries)
-				buf[i++] = htole32(fe->index);
+				buf[i++] = htole32(fe->next);
 		} else {
 			while (entry_nr + i < fe->ending_cluster
 			       && i < entries) {
