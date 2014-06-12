@@ -21,6 +21,8 @@
 #include <errno.h>
 
 #include <algorithm>
+#include <set>
+#include <vector>
 
 #include "vfat.h"
 #include "image.h"
@@ -80,6 +82,15 @@ static std::vector<struct fat_extent> extents_from_end;
 static uint32_t g_data_clusters;
 static uint64_t g_fat_size;
 
+/*
+ * This set contains cluster numbers of chain extents that point at
+ * extents that do not point back to them. This can be either because
+ * the other extent's prev pointer is already in use, or because
+ * they do not point to the start of the other extent.
+ * If the FAT is consistent then this set will be empty.
+ */
+static std::set<uint32_t> broken_chains;
+
 void fat_init(uint32_t data_clusters)
 {
 	g_data_clusters = data_clusters;
@@ -89,6 +100,7 @@ void fat_init(uint32_t data_clusters)
 	extents.push_back(entry_0);
 	extents.push_back(entry_1);
 	clear_vector(extents_from_end);
+	broken_chains.clear();
 }
 
 static bool valid_chain_value(uint32_t value)
@@ -144,6 +156,52 @@ class FatDataService : public DataService {
 } fatservice;
 
 /*
+ * Record that the extent ending at cluster_nr now points to 'value' as
+ * its new next field. This may involve updating the prev pointer of its
+ * destination or adding it to broken_chains.
+ */
+static void new_next(uint32_t cluster_nr, uint32_t value)
+{
+	if (value == FAT_END_OF_CHAIN)
+		return;
+
+	int extent_nr = find_extent(value);
+	if (extent_nr < 0 || value == cluster_nr) {
+		broken_chains.insert(cluster_nr);
+		return;
+	}
+
+	struct fat_extent *fe = &extents[extent_nr];
+	if (fe->is_chain && fe->starting_cluster == value
+			&& (fe->prev == 0 || fe->prev == cluster_nr))
+		fe->prev = cluster_nr;
+	else
+		broken_chains.insert(cluster_nr);
+}
+
+/*
+ * Record that an entry that used to point to 'old_value' no longer
+ * does so. This may involve resetting the prev pointer of its
+ * former destination. It always removes the entry from broken_chains.
+ */
+static void nomore_next(uint32_t cluster_nr, uint32_t old_value)
+{
+	if (old_value == FAT_END_OF_CHAIN)
+		return;
+
+	broken_chains.erase(cluster_nr);
+
+	int extent_nr = find_extent(value);
+	if (extent_nr < 0)
+		return;
+
+	struct fat_extent *fe = &extents[extent_nr];
+	if (fe->is_chain && fe->starting_cluster == old_value
+			&& fe->prev == cluster_nr)
+		fe->prev = 0;
+}
+
+/*
  * Split or reuse an extent so that a new single-cluster extent is
  * created for cluster_nr. Return the number of that extent.
  */
@@ -154,27 +212,43 @@ static void punch_extent(int extent_nr, uint32_t cluster_nr, uint32_t value)
 	new_ext.ending_cluster = cluster_nr;
 	new_ext.next = value;
 	new_ext.prev = 0;
-	new_ext.is_chain = value != FAT_UNALLOCATED
-			&& value != FAT_BAD_CLUSTER;
+	new_ext.is_chain = valid_chain_value(value);
 
 	struct fat_extent *fe = &extents[extent_nr];
-	if (fe->starting_cluster == fe->ending_cluster) {
-		new_ext.prev = fe->prev;
-		*fe = new_ext; // re-use
-		return;
-	}
+
 	if (fe->starting_cluster == cluster_nr) {
-		new_ext.prev = fe->prev;
-		fe->prev = 0;
-		fe->starting_cluster++;
-		extents.insert(extents.begin() + extent_nr, new_ext);
+		if (fe->prev != 0) {
+			// Maintain chain links if possible
+			if (new_ext.is_chain)
+				new_ext.prev = fe->prev;
+			else
+				broken_chains.insert(fe->prev);
+			fe->prev = 0;
+		}
+		if (fe->starting_cluster == fe->ending_cluster) {
+			if (fe->is_chain)
+				nomore_next(cluster_nr, fe->next);
+			*fe = new_ext; // re-use
+		} else {
+			fe->starting_cluster++;
+			extents.insert(extents.begin() + extent_nr, new_ext);
+		}
+		new_next(cluster_nr, value);
 		return;
 	}
+
 	if (fe->ending_cluster == cluster_nr) {
-		fe->ending_cluster--;
-		if (fe->is_chain)
+		if (fe->is_chain) {
+			nomore_next(cluster_nr, fe->next);
 			fe->next = cluster_nr; // preserve old value
+			if (new_ext.is_chain)
+				new_ext.prev = fe->ending_cluster;
+			else
+				broken_chains.insert(fe->ending_cluster);
+		}
+		fe->ending_cluster--;
 		extents.insert(extents.begin() + extent_nr + 1, new_ext);
+		new_next(cluster_nr, value);
 		return;
 	}
 
@@ -183,15 +257,24 @@ static void punch_extent(int extent_nr, uint32_t cluster_nr, uint32_t value)
 	post_ext.starting_cluster = cluster_nr + 1;
 	post_ext.ending_cluster = fe->ending_cluster;
 	post_ext.next = fe->next;
+	// anything pointing at post_ext's starting cluster would have
+	// been pointing into the middle of the old extent and therefore
+	// already in broken_chains.
 	post_ext.prev = 0;
 	fe->ending_cluster = cluster_nr - 1;
-	if (fe->is_chain)
+	if (fe->is_chain) {
 		fe->next = cluster_nr; // preserve old value
+		if (new_ext.is_chain)
+			new_ext.prev = fe->ending_cluster;
+		else
+			broken_chains.insert(fe->ending_cluster);
+	}
 	// Because of the vector implementation it's more
 	// efficient to insert two elements and then fix up
 	// one of them, than to do two inserts.
 	extents.insert(extents.begin() + extent_nr + 1, 2, post_ext);
 	extents[extent_nr + 1] = new_ext;
+	new_next(cluster_nr, value);
 	return;
 }
 
@@ -464,52 +547,9 @@ int FatDataService::receive(const char *cbuf, uint32_t length, uint64_t offset)
 	return 0;
 }
 
-/* Note: this function has side effects on the prev pointers.
- * It adjusts the FAT_END_OF_CHAIN ones if it finds corresponding
- * next pointers. This is invisible to users of the API but should
- * be kept in mind inside this file. */
-// TODO: only check extents that may have been affected by writes
 bool fat_is_consistent(void)
 {
-	/* Requirements:
-	 * No two entries point at the same next entry
-	 * All entries in a chain point at valid chain values
-	 */
-
-	/*
-	 * The prev values are not exhaustively checked.
-	 * As long as each next value points to an extent whose
-	 * prev value points back to it, it's ok.
-	 * This might leave some prev values pointing at extents
-	 * that don't point back to them, but since that has no
-	 * effect on the actual FAT contents we'll ignore it.
-	 */
-	for (int i = extents.size() - 1; i >= 0; i--) {
-		struct fat_extent *fe = &extents[i];
-		if (!fe->is_chain)
-			continue;
-		if (fe->next == FAT_END_OF_CHAIN)
-			continue;
-
-		if (!valid_chain_value(fe->next))
-			return false;
-		int next_nr = find_extent(fe->next);
-		if (next_nr < 0)
-			return false;
-		struct fat_extent *nfe = &extents[next_nr];
-		if (!nfe->is_chain)
-			return false;
-		if (fe->next != nfe->starting_cluster)
-			return false;
-		// It's ok if nfe's prev does not point to anything; just
-		// claim it now. But if it already points to another extent
-		// then there is a conflict.
-		if (nfe->prev == 0)
-			nfe->prev = fe->ending_cluster;
-		else if (nfe->prev != fe->ending_cluster)
-			return false;
-	}
-	return true;
+	return broken_chains.empty();
 }
 
 #ifdef TESTING

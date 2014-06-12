@@ -15,8 +15,6 @@
 
 #include <stdint.h>
 
-#include <vector>
-
 /*
  * This file is the interface to the File Allocation Table logic.
  * Only the FAT32 format is supported here.
