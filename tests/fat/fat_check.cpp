@@ -57,7 +57,7 @@ const char *fat_check_invariants(void)
 				fe->starting_cluster);
 			return errmsg;
 		}
-		if (!is_literal(fe)
+		if (fe->is_chain
 			&& (fe->next == FAT_UNALLOCATED
 			    || fe->next == FAT_BAD_CLUSTER)) {
 			sprintf(errmsg,

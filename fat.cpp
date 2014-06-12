@@ -36,26 +36,25 @@ struct fat_extent {
 	uint32_t starting_cluster;
 	uint32_t ending_cluster;
 	/* first cluster of next extent in this chain, or end-of-chain,
-	 * or literal value if prev == 0 */
+	 * or literal value if !is_chain */
 	uint32_t next;
-	/* last cluster of previous extent in this chain, or end-of-chain,
-	 * or 0 if this is a literal extent */
+	/* last cluster of previous extent in this chain, or 0 if
+	 * this extent starts a chain. If there is no unique previous
+	 * extent, then the FAT is inconsistent and prev is either 0
+	 * or points to one of them, and the rest are in broken_chains.
+	 */
 	uint32_t prev;
+	bool is_chain;
 };
-
-static bool is_literal(struct fat_extent *extent)
-{
-	return extent->prev == 0;
-}
 
 /* entry 0 contains the media descriptor in its low byte,
  * should be the same as in the boot sector. */
 static const struct fat_extent entry_0 = {
-	0, 0, 0x0ffffff8, 0
+	0, 0, 0x0ffffff8, 0, false
 };
 /* entry 1 contains the end-of-chain marker */
 static const struct fat_extent entry_1 = {
-	1, 1, FAT_END_OF_CHAIN, 0
+	1, 1, FAT_END_OF_CHAIN, 0, false
 };
 
 /* Just calling vec.clear() does not release the allocated memory. */
@@ -154,25 +153,26 @@ static void punch_extent(int extent_nr, uint32_t cluster_nr, uint32_t value)
 	new_ext.starting_cluster = cluster_nr;
 	new_ext.ending_cluster = cluster_nr;
 	new_ext.next = value;
-	if (value == FAT_UNALLOCATED || value == FAT_BAD_CLUSTER) {
-		new_ext.prev = 0;
-	} else {
-		new_ext.prev = FAT_END_OF_CHAIN;
-	}
+	new_ext.prev = 0;
+	new_ext.is_chain = value != FAT_UNALLOCATED
+			&& value != FAT_BAD_CLUSTER;
 
 	struct fat_extent *fe = &extents[extent_nr];
 	if (fe->starting_cluster == fe->ending_cluster) {
+		new_ext.prev = fe->prev;
 		*fe = new_ext; // re-use
 		return;
 	}
 	if (fe->starting_cluster == cluster_nr) {
+		new_ext.prev = fe->prev;
+		fe->prev = 0;
 		fe->starting_cluster++;
 		extents.insert(extents.begin() + extent_nr, new_ext);
 		return;
 	}
 	if (fe->ending_cluster == cluster_nr) {
 		fe->ending_cluster--;
-		if (!is_literal(fe))
+		if (fe->is_chain)
 			fe->next = cluster_nr; // preserve old value
 		extents.insert(extents.begin() + extent_nr + 1, new_ext);
 		return;
@@ -183,12 +183,10 @@ static void punch_extent(int extent_nr, uint32_t cluster_nr, uint32_t value)
 	post_ext.starting_cluster = cluster_nr + 1;
 	post_ext.ending_cluster = fe->ending_cluster;
 	post_ext.next = fe->next;
-	post_ext.prev = fe->prev;
+	post_ext.prev = 0;
 	fe->ending_cluster = cluster_nr - 1;
-	if (!is_literal(fe)) {
+	if (fe->is_chain)
 		fe->next = cluster_nr; // preserve old value
-		post_ext.prev = FAT_END_OF_CHAIN; // chain is broken
-	}
 	// Because of the vector implementation it's more
 	// efficient to insert two elements and then fix up
 	// one of them, than to do two inserts.
@@ -205,7 +203,7 @@ static bool try_inc_extent(int extent_nr, uint32_t value)
 	struct fat_extent *fe = &extents[extent_nr];
 
 	/* Literal extents can be extended with an entry of the same value */
-	if (is_literal(fe)) {
+	if (!fe->is_chain) {
 		if (fe->next == value) {
 			fe->ending_cluster++;
 			return true;
@@ -235,12 +233,7 @@ static void bump_extent(int extent_nr)
 		extents.erase(extents.begin() + extent_nr);
 	} else {
 		fe->starting_cluster++;
-		if (!is_literal(fe)) {
-			// The entry pointed to by fe->prev no longer points
-			// back to fe->starting_cluster, so mark the chain
-			// as broken
-			fe->prev = FAT_END_OF_CHAIN;
-		}
+		fe->prev = 0;
 	}
 }
 
@@ -253,7 +246,7 @@ static bool try_renext_extent(int extent_nr, uint32_t value)
 
 	if (extent_nr < RESERVED_FAT_ENTRIES)
 		return false;
-	if (is_literal(fe))
+	if (!fe->is_chain)
 		return false;
 
 	if (valid_chain_value(value)) {
@@ -276,7 +269,8 @@ uint32_t fat_alloc_beginning(uint32_t clusters)
 	new_extent.starting_cluster = first_free_cluster();
 	new_extent.ending_cluster = new_extent.starting_cluster + clusters - 1;
 	new_extent.next = FAT_END_OF_CHAIN;
-	new_extent.prev = FAT_END_OF_CHAIN;
+	new_extent.prev = 0;
+	new_extent.is_chain = true;
 
 	extents.push_back(new_extent);
 
@@ -290,7 +284,8 @@ uint32_t fat_alloc_end(uint32_t clusters)
 	new_extent.ending_cluster = last_free_cluster();
 	new_extent.starting_cluster = new_extent.ending_cluster - clusters + 1;
 	new_extent.next = FAT_END_OF_CHAIN;
-	new_extent.prev = FAT_END_OF_CHAIN;
+	new_extent.prev = 0;
+	new_extent.is_chain = true;
 
 	extents_from_end.push_back(new_extent);
 	return new_extent.starting_cluster;
@@ -304,7 +299,7 @@ uint32_t fat_extend_chain(uint32_t cluster_nr)
 
 	/* Search for last extent of this file or dir */
 	while (extent_nr >= 0 && extents[extent_nr].next != FAT_END_OF_CHAIN) {
-		if (is_literal(&extents[extent_nr]))
+		if (!extents[extent_nr].is_chain)
 			return 0;
 		extent_nr = find_extent(extents[extent_nr].next);
 	}
@@ -323,6 +318,7 @@ uint32_t fat_extend_chain(uint32_t cluster_nr)
 	new_extent.ending_cluster = new_extent.starting_cluster;
 	new_extent.next = FAT_END_OF_CHAIN;
 	new_extent.prev = fe->ending_cluster;
+	new_extent.is_chain = true;
 	fe->next = new_extent.starting_cluster;
 
 	extents.push_back(new_extent);
@@ -346,6 +342,7 @@ void fat_finalize(uint32_t max_free_clusters)
 		first_free_cluster() + max_free_clusters - 1);
 	fe_free.next = FAT_UNALLOCATED;
 	fe_free.prev = 0;
+	fe_free.is_chain = false;
 
 	if (fe_free.ending_cluster >= fe_free.starting_cluster)
 		extents.push_back(fe_free);
@@ -354,6 +351,7 @@ void fat_finalize(uint32_t max_free_clusters)
 	fe_bad.ending_cluster = last_free_cluster();
 	fe_bad.next = FAT_BAD_CLUSTER;
 	fe_bad.prev = 0;
+	fe_bad.is_chain = false;
 
 	if (fe_bad.ending_cluster >= fe_bad.starting_cluster)
 		extents.push_back(fe_bad);
@@ -382,17 +380,17 @@ int FatDataService::fill(char *cbuf, uint32_t length, uint64_t offset)
 	int extent_nr = find_extent(entry_nr);
 	while (extent_nr >= 0) {
 		struct fat_extent *fe = &extents[extent_nr];
-		if (is_literal(fe)) {
-			while (entry_nr + i <= fe->ending_cluster
-			       && i < entries)
-				buf[i++] = htole32(fe->next);
-		} else {
+		if (fe->is_chain) {
 			while (entry_nr + i < fe->ending_cluster
 			       && i < entries) {
 				buf[i] = htole32(entry_nr + i + 1);
 				i++;
 			}
 			if (i < entries)
+				buf[i++] = htole32(fe->next);
+		} else {
+			while (entry_nr + i <= fe->ending_cluster
+			       && i < entries)
 				buf[i++] = htole32(fe->next);
 		}
 		if (i == entries)
@@ -488,7 +486,7 @@ bool fat_is_consistent(void)
 	 */
 	for (int i = extents.size() - 1; i >= 0; i--) {
 		struct fat_extent *fe = &extents[i];
-		if (is_literal(fe))
+		if (!fe->is_chain)
 			continue;
 		if (fe->next == FAT_END_OF_CHAIN)
 			continue;
@@ -499,14 +497,14 @@ bool fat_is_consistent(void)
 		if (next_nr < 0)
 			return false;
 		struct fat_extent *nfe = &extents[next_nr];
-		if (is_literal(nfe))
+		if (!nfe->is_chain)
 			return false;
 		if (fe->next != nfe->starting_cluster)
 			return false;
 		// It's ok if nfe's prev does not point to anything; just
 		// claim it now. But if it already points to another extent
 		// then there is a conflict.
-		if (nfe->prev == FAT_END_OF_CHAIN)
+		if (nfe->prev == 0)
 			nfe->prev = fe->ending_cluster;
 		else if (nfe->prev != fe->ending_cluster)
 			return false;
