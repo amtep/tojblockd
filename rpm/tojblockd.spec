@@ -6,7 +6,6 @@ Group:      System/Daemons
 License:    GPLv2+
 URL:        https://github.com/amtep/tojblockd
 Source0:    %{name}-%{version}.tar.gz
-Requires:   modules(nbd)
 # Qt5 is only needed for the autotests
 BuildRequires: qt5-qmake
 BuildRequires: pkgconfig(Qt5Test)
