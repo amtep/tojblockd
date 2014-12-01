@@ -36,11 +36,16 @@ install -m755 -D tojblockd %{buildroot}/%{_sbindir}/tojblockd
 install -m755 -d %{buildroot}/opt/tests/%{name}
 install -m755 tests/*/test-* %{buildroot}/opt/tests/%{name}/
 install -m644 -D tests/tests.xml %{buildroot}/opt/tests/%{name}/test-definition/tests.xml
+install -m 644 -D systemd/tojblockd@.service %{buildroot}/lib/systemd/system/tojblockd@.service
+
+%post
+systemctl --system daemon-reload
 
 %files
 %defattr(-,root,root,-)
 %doc COPYING
 %{_sbindir}/tojblockd
+/lib/systemd/system/tojblockd@.service
 
 %files tests
 %defattr(-,root,root,-)

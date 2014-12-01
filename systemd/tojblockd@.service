@@ -1,0 +1,14 @@
+[Unit]
+Description=vfat emulator for USB mass storage
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStartPre=/sbin/modprobe nbd
+ExecStart=/usr/sbin/tojblockd %I --label %H
+
+# usb-moded should really take care of this, but it doesn't wait for
+# the service to be ready before writing to /sys
+ExecStartPost=/bin/sh -c 'echo 1 >/sys/class/android_usb/f_mass_storage/lun/ro'
+ExecStartPost=/bin/sh -c 'echo /dev/nbd0 >/sys/class/android_usb/f_mass_storage/lun/file'
+ExecStopPost=/bin/sh -c 'echo "" >/sys/class/android_usb/f_mass_storage/lun/file'
